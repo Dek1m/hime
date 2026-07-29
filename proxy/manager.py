@@ -1,7 +1,6 @@
-"""Proxy manager with round-robin rotation, health checks, and rate limiting."""
+"""Proxy manager with LRU selection, health checks, and rate limiting."""
 
 import asyncio
-import itertools
 import logging
 import time
 from typing import TYPE_CHECKING, Optional
@@ -118,19 +117,18 @@ class ProxyChecker:
 
 class ProxyManager:
     """
-    Proxy manager with round-robin rotation.
+    Proxy manager with LRU selection.
 
     Features:
-    - Round-robin rotation through active proxies
+    - LRU: selects proxy with oldest last_used, respecting reuse_timeout
+    - Batch: get_proxies(n) returns n unique proxies
     - Background health checks with progress tracking
     - Rate limiting per proxy
-    - Automatic dead proxy removal
     """
 
     def __init__(self, config: ProxyConfig):
         self._config = config
         self._proxies: list[ProxyData] = []
-        self._active_cycle: Optional[itertools.cycle] = None
         self._lock = asyncio.Lock()
         self._rate_limiter = RateLimiter(refill_interval=300.0)
         self._checker = ProxyChecker(
@@ -148,13 +146,9 @@ class ProxyManager:
         """Initialize and start background health checks."""
         self._proxies = proxies
         self._store = store
-        self._rebuild_cycle()
         self._check_task = asyncio.create_task(self._health_check_loop())
-        logger.info(
-            "ProxyManager started with %d proxies (%d active)",
-            len(self._proxies),
-            len([p for p in self._proxies if p.status == ProxyStatus.ACTIVE]),
-        )
+        active = len([p for p in self._proxies if p.status == ProxyStatus.ACTIVE])
+        logger.info("ProxyManager started with %d proxies (%d active)", len(self._proxies), active)
 
     async def stop(self) -> None:
         """Stop background tasks."""
@@ -165,23 +159,58 @@ class ProxyManager:
             except asyncio.CancelledError:
                 pass
 
+    def _is_reusable(self, proxy: ProxyData) -> bool:
+        """Check if proxy can be reused based on LRU timeout."""
+        if not proxy.is_available:
+            return False
+        elapsed = time.time() - proxy.last_used
+        return elapsed >= self._config.reuse_timeout
+
     async def get_proxy(self) -> Optional[ProxyData]:
-        """Get next available proxy using round-robin."""
+        """Get next available proxy using LRU (oldest last_used first)."""
         async with self._lock:
-            if not self._active_cycle:
+            candidates = [p for p in self._proxies if self._is_reusable(p)]
+            if not candidates:
                 return None
 
-            attempts = 0
-            while attempts < len(self._proxies):
-                proxy = next(self._active_cycle)
-                if proxy.is_available:
-                    can_use = await self._rate_limiter.can_proceed(proxy.url)
-                    if can_use:
-                        self._stats["requests"] += 1
-                        logger.debug("selected proxy %s:%d", proxy.ip, proxy.port)
-                        return proxy
-                attempts += 1
+            # Sort by last_used ASC — oldest first
+            candidates.sort(key=lambda p: p.last_used)
+
+            for proxy in candidates:
+                can_use = await self._rate_limiter.can_proceed(proxy.url)
+                if can_use:
+                    self._stats["requests"] += 1
+                    logger.debug("LRU selected proxy %s:%d (last_used %.0fs ago)", proxy.ip, proxy.port, time.time() - proxy.last_used)
+                    return proxy
+
             return None
+
+    async def get_proxies(self, count: int) -> list[ProxyData]:
+        """Get N unique proxies for batch requests. Each proxy used once."""
+        async with self._lock:
+            candidates = [p for p in self._proxies if self._is_reusable(p)]
+            if not candidates:
+                return []
+
+            # Sort by last_used ASC
+            candidates.sort(key=lambda p: p.last_used)
+
+            result: list[ProxyData] = []
+            used_urls: set[str] = set()
+
+            for proxy in candidates:
+                if len(result) >= count:
+                    break
+                if proxy.url in used_urls:
+                    continue
+                can_use = await self._rate_limiter.can_proceed(proxy.url)
+                if can_use:
+                    result.append(proxy)
+                    used_urls.add(proxy.url)
+                    self._stats["requests"] += 1
+                    logger.debug("LRU batch selected proxy %s:%d", proxy.ip, proxy.port)
+
+            return result
 
     async def report_success(self, proxy: ProxyData, latency: float = 0.0) -> None:
         """Report successful request. latency in ms."""
@@ -196,19 +225,9 @@ class ProxyManager:
             proxy.mark_failure()
             self._stats["failures"] += 1
             if proxy.failure_count >= self._config.max_failures:
-                logger.warning(
-                    "Proxy %s marked dead after %d failures",
-                    proxy.url,
-                    proxy.failure_count,
-                )
-                self._rebuild_cycle()
+                logger.warning("Proxy %s marked dead after %d failures", proxy.url, proxy.failure_count)
             if self._store:
                 self._store.upsert(proxy)
-
-    def _rebuild_cycle(self) -> None:
-        """Rebuild round-robin cycle with active proxies."""
-        active = [p for p in self._proxies if p.is_available]
-        self._active_cycle = itertools.cycle(active) if active else None
 
     async def _health_check_loop(self) -> None:
         """Background health check every N seconds."""
@@ -233,15 +252,11 @@ class ProxyManager:
             await asyncio.gather(*tasks, return_exceptions=True)
 
         self.progress.finish()
-        logger.info(
-            "Health checks done. Active: %d/%d, latency_ms avg: %.0f",
-            self.progress.active,
-            self.progress.total,
-            self.progress.active and (sum(p.latency_ms for p in self._proxies if p.status == ProxyStatus.ACTIVE and p.latency_ms > 0) / max(1, self.progress.active)),
-        )
-
-        async with self._lock:
-            self._rebuild_cycle()
+        active_count = self.progress.active
+        avg_lat = 0.0
+        if active_count:
+            avg_lat = sum(p.latency_ms for p in self._proxies if p.status == ProxyStatus.ACTIVE and p.latency_ms > 0) / active_count
+        logger.info("Health checks done. Active: %d/%d, latency_ms avg: %.0f", active_count, self.progress.total, avg_lat)
 
     async def _check_one(self, proxy: ProxyData) -> None:
         """Check a single proxy."""

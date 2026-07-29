@@ -29,6 +29,7 @@ class ProxyConfig(BaseModel):
     rate_limit_rpm: int = Field(default=12, description="Requests per minute per proxy")
     health_check_timeout: float = Field(default=5.0, description="Health check timeout")
     max_failures: int = Field(default=3, description="Max failures before marking dead")
+    reuse_timeout: int = Field(default=120, description="Seconds before proxy can be reused (LRU)")
     health_check_url: str = Field(
         default="https://httpbin.org/ip", description="URL for health checks"
     )
@@ -102,6 +103,9 @@ class AppConfig(BaseSettings):
     redis_url: str = Field(default="redis://localhost:6379/0", description="Redis URL")
     sqlite_path: str = Field(default="db/proxies.db", description="SQLite database path")
     log_level: str = Field(default="INFO", description="Logging level")
+    embedding_url: str = Field(default="http://10.0.0.21:8080/v1", description="Embedding API URL")
+    embedding_model: str = Field(default="qwen3-embedding-8b", description="Embedding model name")
+    embedding_dimension: int = Field(default=4096, description="Embedding vector dimension")
 
     model_config = {"env_prefix": "", "env_nested_delimiter": "__"}
 

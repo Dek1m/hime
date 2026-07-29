@@ -1,0 +1,85 @@
+"""Embedding client for semantic search (OpenAI-compatible API)."""
+
+import hashlib
+import json
+import logging
+from typing import Optional
+
+import httpx
+
+logger = logging.getLogger(__name__)
+
+
+class EmbeddingClient:
+    """OpenAI-compatible embedding API client with Redis caching."""
+
+    def __init__(
+        self,
+        api_url: str = "http://10.0.0.21:8080/v1",
+        model: str = "qwen3-embedding-8b",
+        dimension: int = 4096,
+        redis_client=None,
+    ):
+        self._api_url = api_url.rstrip("/")
+        self._model = model
+        self._dimension = dimension
+        self._redis = redis_client
+        self._client: Optional[httpx.AsyncClient] = None
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None:
+            self._client = httpx.AsyncClient(timeout=30.0)
+        return self._client
+
+    async def embed(self, text: str) -> list[float]:
+        """Get embedding for a single text. Uses Redis cache if available."""
+        # Check cache
+        cache_key = None
+        if self._redis:
+            cache_key = f"hime:emb:{hashlib.sha256(text.encode()).hexdigest()}"
+            cached = await self._redis.get(cache_key)
+            if cached:
+                logger.debug("Embedding cache hit for text=%s", text[:50])
+                return json.loads(cached)
+
+        # Call API
+        vector = await self._request_embedding(text)
+
+        # Store in cache
+        if self._redis and vector:
+            await self._redis.set(cache_key, json.dumps(vector), ex=86400)
+
+        return vector
+
+    async def embed_many(self, texts: list[str]) -> list[list[float]]:
+        """Get embeddings for multiple texts."""
+        results = []
+        for text in texts:
+            vector = await self.embed(text)
+            results.append(vector)
+        return results
+
+    async def _request_embedding(self, text: str) -> list[float]:
+        """Call embedding API."""
+        client = await self._get_client()
+        try:
+            resp = await client.post(
+                f"{self._api_url}/embeddings",
+                json={"model": self._model, "input": text},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            vector = data["data"][0]["embedding"]
+
+            if len(vector) != self._dimension:
+                logger.warning("Embedding dimension mismatch: expected %d, got %d", self._dimension, len(vector))
+
+            logger.debug("Embedded text=%s -> vector[%d]", text[:50], len(vector))
+            return vector
+        except Exception as e:
+            logger.error("Embedding API error: %s", e)
+            return [0.0] * self._dimension
+
+    async def close(self) -> None:
+        if self._client:
+            await self._client.aclose()

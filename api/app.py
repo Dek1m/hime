@@ -14,12 +14,10 @@ logger = logging.getLogger(__name__)
 
 
 def create_app() -> FastAPI:
-    """Build and configure the FastAPI application.
-
-    Store and manager are created eagerly and bound to app.state.
-    Lifespan handles startup/shutdown lifecycle.
-    """
+    """Build and configure the FastAPI application."""
     from hime.config import load_config, setup_logging
+    from hime.cache import SearchCache
+    from hime.cache.embedding import EmbeddingClient
     from hime.proxy.manager import ProxyManager
     from hime.storage import ProxyStore
 
@@ -27,16 +25,25 @@ def create_app() -> FastAPI:
     setup_logging(config.log_level)
     store = ProxyStore(config.sqlite_path)
     manager = ProxyManager(config.proxy)
+    cache = SearchCache(redis_url=config.redis_url, prefix=config.cache.prefix, ttl=config.cache.ttl)
+    embedding = EmbeddingClient(
+        api_url=config.embedding_url,
+        model=config.embedding_model,
+        dimension=config.embedding_dimension,
+        redis_client=cache._redis,
+    )
 
     app = FastAPI(
         title="Hime API",
         description="Proxy management API for Hime scraper",
-        version="0.1.0",
+        version="0.4.0",
     )
 
-    # Bind to app.state — routes read these via Request.app.state
+    # Bind to app.state
     app.state.store = store
     app.state.manager = manager
+    app.state.cache = cache
+    app.state.embedding = embedding
 
     app.add_middleware(
         CORSMiddleware,
@@ -66,11 +73,13 @@ def create_app() -> FastAPI:
     async def on_startup():
         active = store.get_active()
         await manager.start(active, store)
-        logger.info("Hime API started — %d active proxies", len(active))
+        logger.info("Hime API started — %d active proxies, embedding=%s", len(active), config.embedding_url)
 
     @app.on_event("shutdown")
     async def on_shutdown():
         await manager.stop()
+        await embedding.close()
+        await cache.close()
         logger.info("Hime API shut down")
 
     return app
