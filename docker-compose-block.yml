@@ -18,6 +18,7 @@
       - "8008:8008"
     volumes:
       - ./hime/data:/app/data
+      - ./hime/db:/app/db
     environment:
       REDIS_URL: redis://redis:6379/0
       SQLITE_PATH: db/proxies.db
