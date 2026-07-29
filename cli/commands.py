@@ -345,31 +345,9 @@ def _serve(
     port: int = 8000,
 ):
     """Start the API server (FastAPI + uvicorn)."""
-    from hime.config import load_config
-    from hime.storage import ProxyStore
-    from hime.proxy.manager import ProxyManager
-    from hime.api.routes import router, init_dependencies
+    from hime.api.app import create_app
 
-    config = load_config()
-    store = ProxyStore(config.sqlite_path)
-
-    async def _startup():
-        manager = ProxyManager(config.proxy)
-        proxies = store.get_active()
-        await manager.start(proxies)
-        init_dependencies(store, manager)
-        return manager
-
-    manager = _run(_startup())
-
-    from fastapi import FastAPI
-
-    fastapi_app = FastAPI(title="Hime API", version="0.1.0")
-    fastapi_app.include_router(router)
-
-    @fastapi_app.on_event("shutdown")
-    async def shutdown():
-        await manager.stop()
+    fastapi_app = create_app()
 
     console.print(f"[green]Starting Hime API on {host}:{port}[/green]")
     try:
