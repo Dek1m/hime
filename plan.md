@@ -115,6 +115,54 @@ curl http://localhost:8000/health
 3. monosans/proxy-list — http.txt, socks5.txt
 4. clarketm/proxy-list — proxy-list-raw.txt
 
+## Таблица proxy_sources
+
+### Схема БД
+
+CREATE TABLE proxy_sources (
+    uuid        TEXT PRIMARY KEY,
+    url         TEXT NOT NULL UNIQUE,
+    type_hint   TEXT DEFAULT 'http',
+    enabled     INTEGER DEFAULT 1,
+    last_fetch  REAL DEFAULT 0,
+    added_at    TEXT DEFAULT (datetime('now'))
+);
+
+### CRUD операции
+
+| Описание | Код |
+|---|---|
+| Добавить источник | store.add_source(url, type_hint) |
+| Получить по UUID | store.get_source(uuid) |
+| Список всех | store.list_sources() |
+| Только активные | store.list_sources(enabled_only=True) |
+| Включить | store.enable_source(uuid) |
+| Выключить | store.disable_source(uuid) |
+| Удалить | store.delete_source(uuid) |
+
+### API эндпоинты
+
+| Метод | Путь | Описание |
+|-------|------|----------|
+| GET | /sources | Список всех источников |
+| POST | /sources | Добавить источник |
+| PATCH | /sources/{uuid} | Включить/выключить |
+| DELETE | /sources/{uuid} | Удалить |
+
+### CLI команды
+
+| Команда | Описание |
+|---------|----------|
+| hime source list | Все источники |
+| hime source add <url> | Добавить |
+| hime source remove <uuid> | Удалить |
+| hime source enable <uuid> | Включить |
+| hime source disable <uuid> | Выключить |
+
+### Миграция
+- При первом запуске: дефолтные sources из config.py → proxy_sources
+- Fallback: если таблица пуста, loader берёт URLs из конфига
+
 ## Конфигурация (.env)
 
 ```env
