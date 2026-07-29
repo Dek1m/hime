@@ -325,7 +325,7 @@ def stats():
 @app.command()
 def api(
     host: str = typer.Option("0.0.0.0", "--host", "-h", help="Bind host"),
-    port: int = typer.Option(8000, "--port", "-p", help="Bind port"),
+    port: int = typer.Option(8008, "--port", "-p", help="Bind port"),
 ):
     """Start the API server (alias for 'serve')."""
     return _serve(host, port)
@@ -334,7 +334,7 @@ def api(
 @app.command()
 def serve(
     host: str = typer.Option("0.0.0.0", "--host", "-h", help="Bind host"),
-    port: int = typer.Option(8000, "--port", "-p", help="Bind port"),
+    port: int = typer.Option(8008, "--port", "-p", help="Bind port"),
 ):
     """Start the API server (FastAPI + uvicorn)."""
     return _serve(host, port)
@@ -342,7 +342,7 @@ def serve(
 
 def _serve(
     host: str = "0.0.0.0",
-    port: int = 8000,
+    port: int = 8008,
 ):
     """Start the API server (FastAPI + uvicorn)."""
     from hime.api.app import create_app

@@ -13,10 +13,9 @@
     image: hime:latest
     container_name: hime
     restart: unless-stopped
-    # API-сервер (uvicorn, порт 8000 внутри, 8008 снаружи)
-    command: ["api"]
+    command: ["api", "--port", "8008"]
     ports:
-      - "8008:8000"
+      - "8008:8008"
     volumes:
       - ./hime/data:/app/data
     environment:
@@ -29,7 +28,7 @@
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8008/health')"]
       interval: 30s
       timeout: 5s
       start_period: 10s

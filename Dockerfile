@@ -1,5 +1,5 @@
 # ============================================================
-# Dockerfile — Hime (Mass Google Scraper with Proxy Rotation)
+# Dockerfile — Hime (Proxy Management API)
 # ============================================================
 # Многостадийная сборка:
 #   Stage 1: установка зависимостей (кэшируется по pyproject.toml)
@@ -7,7 +7,7 @@
 #
 # Режим запуска:
 #   CLI:   docker run hime                 (по умолчанию)
-#   API:   docker run hime api             (uvicorn, порт 8000)
+#   API:   docker run hime api             (uvicorn, порт 8008)
 # ============================================================
 
 # === Stage 1: Build dependencies ===
@@ -48,21 +48,17 @@ COPY api/ ./api/
 COPY pyproject.toml ./
 
 # Симлинк hime -> . чтобы "from hime.xxx import ..." работал
-# PYTHONPATH=/app добавляет /app в sys.path,
-# Python находит hime (симлинк на /app) и резолвит hime.xxx -> /app/xxx
 RUN ln -s . hime && \
     mkdir -p /app/data /app/db && chown -R hime:hime /app
 
 ENV PYTHONPATH=/app
 
-EXPOSE 8000
+EXPOSE 8008
 
-# Healthcheck: curl к /health если API, иначе просто проверяем что процесс жив
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" 2>/dev/null || exit 0
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8008/health')" 2>/dev/null || exit 0
 
 USER hime
 
-# По умолчанию — CLI (typer). Переопределить: docker run hime api
 ENTRYPOINT ["python", "-m", "hime"]
-CMD []
+CMD ["api", "--port", "8008"]
