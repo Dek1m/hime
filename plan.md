@@ -163,6 +163,119 @@ CREATE TABLE proxy_sources (
 - При первом запуске: дефолтные sources из config.py → proxy_sources
 - Fallback: если таблица пуста, loader берёт URLs из конфига
 
+## Таблица services (v0.3.0)
+
+### Описание
+Таблица `services` хранит настройки запросов к внешним сервисам. Каждый сервис — это конфигурация HTTP-запроса: URL, метод, заголовки, тело, таймаут, кеш, прокси.
+
+### Схема БД (миграция)
+
+CREATE TABLE IF NOT EXISTS services (
+    uuid            TEXT PRIMARY KEY,
+    name            TEXT    NOT NULL UNIQUE,
+    url             TEXT    NOT NULL,
+    method          TEXT    NOT NULL DEFAULT 'GET',
+    headers         TEXT    DEFAULT '{}',
+    body            TEXT    DEFAULT '',
+    timeout         REAL    DEFAULT 15.0,
+    cache_ttl       INTEGER DEFAULT 0,
+    auto_parse      INTEGER DEFAULT 1,
+    rate_limit_rpm  INTEGER DEFAULT 60,
+    callback_url    TEXT    DEFAULT '',
+    proxy           INTEGER DEFAULT 0,
+    enabled         INTEGER DEFAULT 1,
+    created_at      TEXT    DEFAULT (datetime('now')),
+    modified_at     TEXT    DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_services_name ON services(name);
+CREATE INDEX IF NOT EXISTS idx_services_enabled ON services(enabled);
+
+### Параметры
+
+| Параметр | Тип | Описание | Дефолт |
+|---|---|---|---|
+| uuid | TEXT PK | Уникальный идентификатор | UUID4 |
+| name | TEXT UNIQUE | Имя сервиса | — |
+| url | TEXT | Базовый URL | — |
+| method | TEXT | HTTP метод (GET/POST/PUT/DELETE) | GET |
+| headers | TEXT (JSON) | Заголовки по умолчанию | {} |
+| body | TEXT | Тело для POST | "" |
+| timeout | REAL | Таймаут (сек) | 15.0 |
+| cache_ttl | INT | Время кеша (сек), 0 = без кеша | 0 |
+| auto_parse | INT | Автопарсинг ответа (bool) | 1 |
+| rate_limit_rpm | INT | Лимит запросов/мин | 60 |
+| callback_url | TEXT | URL для callback'а | "" |
+| proxy | INT | Использовать прокси (bool) | 0 |
+| enabled | INT | Сервис включён (bool) | 1 |
+| created_at | TEXT | Дата создания | datetime('now') |
+| modified_at | TEXT | Дата последнего изменения | datetime('now') |
+
+### CRUD операции
+
+| Описание | Код |
+|---|---|
+| Создать сервис | store.create_service(name, url, **kwargs) |
+| Получить по UUID | store.get_service(uuid) |
+| Получить по имени | store.get_service_by_name(name) |
+| Список всех | store.list_services() |
+| Только включённые | store.list_services(enabled_only=True) |
+| Обновить | store.update_service(uuid, **fields) |
+| Удалить | store.delete_service(uuid) |
+
+### API эндпоинты
+
+| Метод | Путь | Описание |
+|-------|------|----------|
+| GET | /services | Список всех сервисов |
+| GET | /services/{uuid} | Один сервис |
+| POST | /services | Создать сервис |
+| PATCH | /services/{uuid} | Обновить сервис |
+| DELETE | /services/{uuid} | Удалить сервис |
+
+### JSON формат запроса
+
+POST /services:
+{
+  "name": "github_api",
+  "url": "https://api.github.com",
+  "method": "GET",
+  "headers": {"Accept": "application/json"},
+  "timeout": 10.0,
+  "cache_ttl": 300,
+  "proxy": false
+}
+
+### Декомпозиция задач
+
+| # | Задача | Файл | Сложность | Время |
+|---|--------|------|-----------|-------|
+| 1 | Миграция: таблица services | storage/__init__.py | Низкая | 0.5ч |
+| 2 | Модель ServiceData | storage/__init__.py | Низкая | 0.5ч |
+| 3 | CRUD методы | storage/__init__.py | Средняя | 1ч |
+| 4 | Pydantic схемы | api/schemas.py | Низкая | 0.5ч |
+| 5 | API эндпоинты | api/routes.py | Средняя | 1.5ч |
+| 6 | ServiceStore в app.state | api/app.py | Низкая | 0.5ч |
+| 7 | CLI команды | cli/commands.py | Низкая | 1ч |
+| 8 | Тесты | tests/ | Средняя | 1ч |
+| 9 | Коммит, push, deploy | — | — | 0.5ч |
+
+### Порядок выполнения
+
+1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9
+
+### Зависимости
+
+- Задача 1 (миграция) — обязательна первой
+- Задача 2 (модель) — от задачи 1
+- Задача 3 (CRUD) — от задачи 2
+- Задача 4 (схемы) — от задачи 2
+- Задача 5 (API) — от задач 3, 4
+- Задача 6 (app.state) — от задачи 3
+- Задача 7 (CLI) — от задачи 3
+- Задача 8 (тесты) — от задач 5, 7
+- Задача 9 (deploy) — от всех
+
 ## Конфигурация (.env)
 
 ```env
@@ -177,6 +290,13 @@ LOG_LEVEL=INFO
 ```
 
 ## История
+
+### v0.3.0 — Services Table (2026-07-29)
+- ✅ Таблица services (uuid, name, url, method, headers, body, timeout, cache_ttl, auto_parse, rate_limit_rpm, callback_url, proxy, enabled)
+- ✅ CRUD: create, get, list, update, delete
+- ✅ API: GET/POST/PATCH/DELETE /services
+- ✅ CLI: hime service list/add/remove
+- ✅ Миграция из существующей БД
 
 ### v0.2.0 — REST API + GitHub Loader (2026-07-28)
 - ✅ Новая схема БД (uuid, last_working, source, added_at)
