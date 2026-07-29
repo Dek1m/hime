@@ -1,3 +1,3 @@
-"""Hime — Mass Google Scraper with Proxy Rotation."""
+"""Hime — Proxy Management API."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
