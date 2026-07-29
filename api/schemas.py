@@ -106,3 +106,67 @@ class SourceListResponse(BaseModel):
     sources: list[SourceResponse]
     total: int
     enabled: int
+
+
+# ──────────────── Services ────────────────
+
+
+class ServiceCreate(BaseModel):
+    """Request to create a service."""
+
+    name: str = Field(..., min_length=1, max_length=100)
+    url: str = Field(..., description="Base URL of the service endpoint")
+    method: str = Field(default="GET", pattern="^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)$")
+    headers: dict[str, str] = Field(default_factory=dict)
+    body: str = Field(default="", description="Request body (for POST/PUT/PATCH)")
+    timeout: float = Field(default=15.0, ge=1.0, le=300.0)
+    cache_ttl: int = Field(default=0, ge=0, description="Cache TTL in seconds (0 = no cache)")
+    auto_parse: bool = Field(default=True, description="Auto-parse response")
+    rate_limit_rpm: int = Field(default=60, ge=1, le=10000, description="Requests per minute")
+    callback_url: str = Field(default="", description="Callback URL")
+    proxy: bool = Field(default=False, description="Use proxy")
+    enabled: bool = Field(default=True)
+
+
+class ServiceUpdate(BaseModel):
+    """Request to update a service (all fields optional)."""
+
+    name: str | None = Field(None, min_length=1, max_length=100)
+    url: str | None = None
+    method: str | None = Field(None, pattern="^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)$")
+    headers: dict[str, str] | None = None
+    body: str | None = None
+    timeout: float | None = Field(None, ge=1.0, le=300.0)
+    cache_ttl: int | None = Field(None, ge=0)
+    auto_parse: bool | None = None
+    rate_limit_rpm: int | None = Field(None, ge=1, le=10000)
+    callback_url: str | None = None
+    proxy: bool | None = None
+    enabled: bool | None = None
+
+
+class ServiceResponse(BaseModel):
+    """Single service representation."""
+
+    uuid: str
+    name: str
+    url: str
+    method: str
+    headers: dict[str, str]
+    body: str
+    timeout: float
+    cache_ttl: int
+    auto_parse: bool
+    rate_limit_rpm: int
+    callback_url: str
+    proxy: bool
+    enabled: bool
+    created_at: str
+    modified_at: str
+
+
+class ServiceListResponse(BaseModel):
+    """List of services."""
+
+    services: list[ServiceResponse]
+    total: int

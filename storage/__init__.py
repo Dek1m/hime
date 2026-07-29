@@ -1,9 +1,10 @@
-"""SQLite storage for proxies and sources."""
+"""SQLite storage for proxies, sources and services."""
 
+import json
 import sqlite3
 import uuid as _uuid
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from hime.proxy import ProxyData, ProxyType, ProxyStatus
@@ -18,6 +19,26 @@ class ProxySource:
     enabled: bool = True
     last_fetch: float = 0.0
     added_at: str = ""
+
+
+@dataclass
+class ServiceData:
+    """Service configuration data model."""
+    uuid: str
+    name: str
+    url: str
+    method: str = "GET"
+    headers: dict = field(default_factory=dict)
+    body: str = ""
+    timeout: float = 15.0
+    cache_ttl: int = 0
+    auto_parse: bool = True
+    rate_limit_rpm: int = 60
+    callback_url: str = ""
+    proxy: bool = False
+    enabled: bool = True
+    created_at: str = ""
+    modified_at: str = ""
 
 
 class ProxyStore:
@@ -67,6 +88,29 @@ class ProxyStore:
                     ON proxy_sources(url);
                 CREATE INDEX IF NOT EXISTS idx_sources_enabled
                     ON proxy_sources(enabled);
+
+                CREATE TABLE IF NOT EXISTS services (
+                    uuid            TEXT PRIMARY KEY,
+                    name            TEXT    NOT NULL UNIQUE,
+                    url             TEXT    NOT NULL,
+                    method          TEXT    NOT NULL DEFAULT 'GET',
+                    headers         TEXT    DEFAULT '{}',
+                    body            TEXT    DEFAULT '',
+                    timeout         REAL    DEFAULT 15.0,
+                    cache_ttl       INTEGER DEFAULT 0,
+                    auto_parse      INTEGER DEFAULT 1,
+                    rate_limit_rpm  INTEGER DEFAULT 60,
+                    callback_url    TEXT    DEFAULT '',
+                    proxy           INTEGER DEFAULT 0,
+                    enabled         INTEGER DEFAULT 1,
+                    created_at      TEXT    DEFAULT (datetime('now')),
+                    modified_at     TEXT    DEFAULT (datetime('now'))
+                );
+
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_services_name
+                    ON services(name);
+                CREATE INDEX IF NOT EXISTS idx_services_enabled
+                    ON services(enabled);
                 """
             )
             self._migrate(conn)
@@ -436,4 +480,127 @@ class ProxyStore:
             enabled=bool(row["enabled"]),
             last_fetch=row["last_fetch"],
             added_at=row["added_at"],
+        )
+
+    # ──────────────── Services CRUD ────────────────
+
+    def create_service(self, name: str, url: str, **kwargs) -> ServiceData:
+        """Create a new service."""
+        service_uuid = str(_uuid.uuid4())
+        headers = json.dumps(kwargs.pop("headers", {}))
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO services (uuid, name, url, method, headers, body,
+                    timeout, cache_ttl, auto_parse, rate_limit_rpm,
+                    callback_url, proxy, enabled)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    service_uuid,
+                    name,
+                    url,
+                    kwargs.get("method", "GET"),
+                    headers,
+                    kwargs.get("body", ""),
+                    kwargs.get("timeout", 15.0),
+                    kwargs.get("cache_ttl", 0),
+                    int(kwargs.get("auto_parse", True)),
+                    kwargs.get("rate_limit_rpm", 60),
+                    kwargs.get("callback_url", ""),
+                    int(kwargs.get("proxy", False)),
+                    int(kwargs.get("enabled", True)),
+                ),
+            )
+        return self.get_service(service_uuid)
+
+    def get_service(self, service_uuid: str) -> ServiceData | None:
+        """Get service by UUID."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM services WHERE uuid = ?", (service_uuid,)
+            ).fetchone()
+            return self._row_to_service(row) if row else None
+
+    def get_service_by_name(self, name: str) -> ServiceData | None:
+        """Get service by unique name."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM services WHERE name = ?", (name,)
+            ).fetchone()
+            return self._row_to_service(row) if row else None
+
+    def list_services(self, enabled_only: bool = False) -> list[ServiceData]:
+        """List all services."""
+        with self._connect() as conn:
+            query = "SELECT * FROM services"
+            if enabled_only:
+                query += " WHERE enabled = 1"
+            query += " ORDER BY name"
+            rows = conn.execute(query).fetchall()
+            return [self._row_to_service(r) for r in rows]
+
+    def update_service(self, service_uuid: str, **kwargs) -> ServiceData | None:
+        """Update service fields. Returns updated service or None."""
+        allowed = {
+            "name", "url", "method", "headers", "body", "timeout",
+            "cache_ttl", "auto_parse", "rate_limit_rpm", "callback_url",
+            "proxy", "enabled"
+        }
+        updates = {k: v for k, v in kwargs.items() if k in allowed}
+        if not updates:
+            return self.get_service(service_uuid)
+
+        if "headers" in updates and isinstance(updates["headers"], dict):
+            updates["headers"] = json.dumps(updates["headers"])
+
+        for bool_field in ("auto_parse", "proxy", "enabled"):
+            if bool_field in updates:
+                updates[bool_field] = int(updates[bool_field])
+
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        values = list(updates.values()) + [service_uuid]
+
+        with self._connect() as conn:
+            conn.execute(
+                f"UPDATE services SET {set_clause}, modified_at = datetime('now') WHERE uuid = ?",
+                values,
+            )
+        return self.get_service(service_uuid)
+
+    def delete_service(self, service_uuid: str) -> bool:
+        """Delete a service."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM services WHERE uuid = ?", (service_uuid,)
+            )
+            return cursor.rowcount > 0
+
+    def service_exists(self, name: str) -> bool:
+        """Check if a service with this name exists."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM services WHERE name = ?", (name,)
+            ).fetchone()
+            return row is not None
+
+    @staticmethod
+    def _row_to_service(row: sqlite3.Row) -> ServiceData:
+        """Convert database row to ServiceData."""
+        return ServiceData(
+            uuid=row["uuid"],
+            name=row["name"],
+            url=row["url"],
+            method=row["method"],
+            headers=json.loads(row["headers"]) if row["headers"] else {},
+            body=row["body"],
+            timeout=row["timeout"],
+            cache_ttl=row["cache_ttl"],
+            auto_parse=bool(row["auto_parse"]),
+            rate_limit_rpm=row["rate_limit_rpm"],
+            callback_url=row["callback_url"],
+            proxy=bool(row["proxy"]),
+            enabled=bool(row["enabled"]),
+            created_at=row["created_at"],
+            modified_at=row["modified_at"],
         )

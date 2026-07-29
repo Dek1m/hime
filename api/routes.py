@@ -21,6 +21,10 @@ from .schemas import (
     LoadResponse,
     ProxyListResponse,
     ProxyResponse,
+    ServiceCreate,
+    ServiceListResponse,
+    ServiceResponse,
+    ServiceUpdate,
     SourceCreate,
     SourceListResponse,
     SourceResponse,
@@ -341,3 +345,100 @@ async def seed_sources(store: StoreDep) -> dict:
     added = store.seed_sources(urls)
     total = len(store.list_sources())
     return {"added": added, "total": total}
+
+
+# ──────────────── Services ────────────────
+
+
+def _service_to_response(s) -> ServiceResponse:
+    return ServiceResponse(
+        uuid=s.uuid,
+        name=s.name,
+        url=s.url,
+        method=s.method,
+        headers=s.headers,
+        body=s.body,
+        timeout=s.timeout,
+        cache_ttl=s.cache_ttl,
+        auto_parse=s.auto_parse,
+        rate_limit_rpm=s.rate_limit_rpm,
+        callback_url=s.callback_url,
+        proxy=s.proxy,
+        enabled=s.enabled,
+        created_at=s.created_at or "",
+        modified_at=s.modified_at or "",
+    )
+
+
+@router.get("/services", response_model=ServiceListResponse)
+async def list_services(
+    store: StoreDep,
+    enabled: Optional[bool] = Query(None),
+) -> ServiceListResponse:
+    """List all services."""
+    services = store.list_services(enabled_only=enabled is True)
+    return ServiceListResponse(
+        services=[_service_to_response(s) for s in services],
+        total=len(services),
+    )
+
+
+@router.get("/services/{service_uuid}", response_model=ServiceResponse)
+async def get_service(service_uuid: str, store: StoreDep) -> ServiceResponse:
+    """Get service by UUID."""
+    service = store.get_service(service_uuid)
+    if service is None:
+        raise HTTPException(status_code=404, detail="Service not found")
+    return _service_to_response(service)
+
+
+@router.post("/services", response_model=ServiceResponse, status_code=201)
+async def create_service(body: ServiceCreate, store: StoreDep) -> ServiceResponse:
+    """Create a new service."""
+    if store.service_exists(body.name):
+        raise HTTPException(status_code=409, detail=f"Service '{body.name}' already exists")
+    service = store.create_service(
+        name=body.name,
+        url=body.url,
+        method=body.method,
+        headers=body.headers,
+        body=body.body,
+        timeout=body.timeout,
+        cache_ttl=body.cache_ttl,
+        auto_parse=body.auto_parse,
+        rate_limit_rpm=body.rate_limit_rpm,
+        callback_url=body.callback_url,
+        proxy=body.proxy,
+        enabled=body.enabled,
+    )
+    return _service_to_response(service)
+
+
+@router.patch("/services/{service_uuid}", response_model=ServiceResponse)
+async def update_service(
+    service_uuid: str,
+    body: ServiceUpdate,
+    store: StoreDep,
+) -> ServiceResponse:
+    """Update a service (partial update)."""
+    existing = store.get_service(service_uuid)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Service not found")
+
+    if body.name is not None and body.name != existing.name:
+        if store.service_exists(body.name):
+            raise HTTPException(status_code=409, detail=f"Service '{body.name}' already exists")
+
+    updates = body.model_dump(exclude_unset=True)
+    updated = store.update_service(service_uuid, **updates)
+    return _service_to_response(updated)
+
+
+@router.delete("/services/{service_uuid}")
+async def delete_service(service_uuid: str, store: StoreDep) -> dict:
+    """Delete a service."""
+    existing = store.get_service(service_uuid)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Service not found")
+    store.delete_service(service_uuid)
+    return {"deleted": True, "uuid": service_uuid, "name": existing.name}

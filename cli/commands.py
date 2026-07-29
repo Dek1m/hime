@@ -539,3 +539,144 @@ def _source_seed():
     added = store.seed_sources(urls)
     total = len(store.list_sources())
     console.print(f"[green]Seeded {added} new sources ({total} total in DB)[/green]")
+
+
+@app.command("service")
+def service_cmd(
+    action: str = typer.Argument(..., help="Action: list, add, remove, get"),
+    name: Optional[str] = typer.Option(None, help="Service name (for add)"),
+    url: Optional[str] = typer.Option(None, help="Service URL (for add)"),
+    service_id: Optional[str] = typer.Option(None, "--id", help="Service UUID"),
+    method: str = typer.Option("GET", "--method", "-m", help="HTTP method"),
+    proxy: bool = typer.Option(False, "--proxy", help="Use proxy"),
+):
+    """Manage services."""
+    if action == "list":
+        _service_list()
+    elif action == "add":
+        if not name or not url:
+            console.print("[red]--name and --url are required for service add[/red]")
+            raise typer.Exit(1)
+        _service_add(name, url, method, proxy)
+    elif action == "remove":
+        if not service_id:
+            console.print("[red]--id is required for service remove[/red]")
+            raise typer.Exit(1)
+        _service_remove(service_id)
+    elif action == "get":
+        if not service_id:
+            console.print("[red]--id is required for service get[/red]")
+            raise typer.Exit(1)
+        _service_get(service_id)
+    else:
+        console.print(f"[red]Unknown action: {action}[/red]")
+        raise typer.Exit(1)
+
+
+def _service_list():
+    """List all services."""
+    from hime.config import load_config
+    from hime.storage import ProxyStore
+
+    config = load_config()
+    store = ProxyStore(config.sqlite_path)
+    services = store.list_services()
+
+    if not services:
+        console.print("[yellow]No services found.[/yellow]")
+        raise typer.Exit()
+
+    table = Table(title=f"Services ({len(services)})")
+    table.add_column("UUID", style="dim", max_width=8)
+    table.add_column("Name", style="cyan")
+    table.add_column("URL")
+    table.add_column("Method")
+    table.add_column("Proxy")
+    table.add_column("Enabled")
+    table.add_column("Cache TTL")
+
+    for s in services:
+        proxy_color = "green" if s.proxy else "red"
+        enabled_color = "green" if s.enabled else "red"
+        table.add_row(
+            s.uuid[:8],
+            s.name,
+            s.url[:40],
+            s.method,
+            f"[{proxy_color}]{'yes' if s.proxy else 'no'}[/{proxy_color}]",
+            f"[{enabled_color}]{'yes' if s.enabled else 'no'}[/{enabled_color}]",
+            str(s.cache_ttl),
+        )
+
+    console.print(table)
+
+
+def _service_add(name: str, url: str, method: str, proxy: bool):
+    """Add a service."""
+    from hime.config import load_config
+    from hime.storage import ProxyStore
+
+    config = load_config()
+    store = ProxyStore(config.sqlite_path)
+
+    if store.service_exists(name):
+        console.print(f"[yellow]Service '{name}' already exists[/yellow]")
+        raise typer.Exit()
+
+    service = store.create_service(name=name, url=url, method=method, proxy=proxy)
+    console.print(f"[green]Added service: {service.uuid[:8]} — {name}[/green]")
+
+
+def _service_remove(service_id: str):
+    """Remove a service."""
+    from hime.config import load_config
+    from hime.storage import ProxyStore
+
+    config = load_config()
+    store = ProxyStore(config.sqlite_path)
+
+    services = store.list_services()
+    target = None
+    for s in services:
+        if s.uuid.startswith(service_id):
+            target = s
+            break
+
+    if not target:
+        console.print(f"[red]Service not found: {service_id}[/red]")
+        raise typer.Exit(1)
+
+    store.delete_service(target.uuid)
+    console.print(f"[green]Removed service: {target.uuid[:8]} — {target.name}[/green]")
+
+
+def _service_get(service_id: str):
+    """Get service details."""
+    from hime.config import load_config
+    from hime.storage import ProxyStore
+
+    config = load_config()
+    store = ProxyStore(config.sqlite_path)
+
+    services = store.list_services()
+    target = None
+    for s in services:
+        if s.uuid.startswith(service_id):
+            target = s
+            break
+
+    if not target:
+        console.print(f"[red]Service not found: {service_id}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[bold]Service: {target.name}[/bold]")
+    console.print(f"  UUID: {target.uuid}")
+    console.print(f"  URL: {target.url}")
+    console.print(f"  Method: {target.method}")
+    console.print(f"  Headers: {target.headers}")
+    console.print(f"  Timeout: {target.timeout}s")
+    console.print(f"  Cache TTL: {target.cache_ttl}s")
+    console.print(f"  Proxy: {'yes' if target.proxy else 'no'}")
+    console.print(f"  Enabled: {'yes' if target.enabled else 'no'}")
+    console.print(f"  Created: {target.created_at}")
+    console.print(f"  Modified: {target.modified_at}")
