@@ -13,6 +13,7 @@ class ProxyResponse(BaseModel):
     port: int
     type: str = Field(description="Proxy protocol: http, https, socks5")
     status: str = Field(description="Proxy status: active, dead, unknown")
+    latency_ms: float = Field(description="Response latency in milliseconds", default=0.0)
     last_check: datetime | None = None
     last_working: datetime | None = None
     added_at: str | None = None
@@ -35,6 +36,20 @@ class StatsResponse(BaseModel):
     dead: int
     unknown: int
     by_source: dict[str, int]
+    avg_latency_ms: float = Field(description="Average latency of active proxies in ms", default=0.0)
+
+
+class CheckStatusResponse(BaseModel):
+    """Health check progress."""
+
+    running: bool
+    total: int
+    checked: int
+    active: int
+    dead: int
+    unknown: int
+    progress_pct: float = Field(description="Check progress percentage")
+    elapsed_sec: float
 
 
 class CheckResponse(BaseModel):

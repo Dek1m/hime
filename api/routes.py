@@ -7,7 +7,7 @@ import logging
 import time
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from hime.proxy import ProxyStatus, ProxyType
 from hime.proxy.loader import load_all_proxies
@@ -16,6 +16,7 @@ from hime.storage import ProxyStore
 
 from .schemas import (
     CheckResponse,
+    CheckStatusResponse,
     HealthResponse,
     LoadResponse,
     ProxyListResponse,
@@ -28,7 +29,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # ---------------------------------------------------------------------------
-# Global task registry — lets us track background jobs
+# Global task registry
 # ---------------------------------------------------------------------------
 
 _tasks: dict[str, asyncio.Task] = {}
@@ -39,7 +40,7 @@ def _task_name(prefix: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# FastAPI dependencies — read from app.state at request time
+# FastAPI dependencies
 # ---------------------------------------------------------------------------
 
 def _get_store(request: Request) -> ProxyStore:
@@ -78,6 +79,7 @@ def _proxy_to_response(p) -> ProxyResponse:
         port=p.port,
         type=p.type.value,
         status=p.status.value,
+        latency_ms=round(p.latency_ms, 1),
         last_check=_ts_to_iso(p.last_check),
         last_working=_ts_to_iso(p.last_working),
         added_at=p.added_at or None,
@@ -87,14 +89,13 @@ def _proxy_to_response(p) -> ProxyResponse:
 
 
 # ---------------------------------------------------------------------------
-# Background coroutines — run via asyncio.create_task()
+# Background coroutines
 # ---------------------------------------------------------------------------
 
 async def _bg_health_check(store: ProxyStore, manager: ProxyManager) -> None:
-    """Run full health check on ALL proxies from DB, writing results after each batch."""
+    """Run full health check on ALL proxies from DB."""
     logger.info("Background health check started")
     try:
-        # Reload ALL proxies from DB into manager for checking
         all_proxies = store.get_all()
         manager._proxies = all_proxies
         manager._rebuild_cycle()
@@ -133,6 +134,7 @@ async def list_proxies(
     status: Optional[str] = Query(None),
     type: Optional[str] = Query(None),
     source: Optional[str] = Query(None),
+    sort: Optional[str] = Query(None, description="Sort by: latency, last_check, last_working"),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
 ) -> ProxyListResponse:
@@ -143,6 +145,15 @@ async def list_proxies(
         proxies = [p for p in proxies if p.type.value == type]
     if source:
         proxies = [p for p in proxies if source.lower() in p.source.lower()]
+
+    # Sorting
+    if sort == "latency":
+        proxies.sort(key=lambda p: p.latency_ms if p.latency_ms > 0 else float("inf"))
+    elif sort == "last_check":
+        proxies.sort(key=lambda p: p.last_check, reverse=True)
+    elif sort == "last_working":
+        proxies.sort(key=lambda p: p.last_working, reverse=True)
+
     total = len(proxies)
     page = proxies[offset:offset + limit]
     return ProxyListResponse(
@@ -179,6 +190,12 @@ async def list_tasks():
     }
 
 
+@router.get("/check/status", response_model=CheckStatusResponse)
+async def check_status(manager: ManagerDep) -> CheckStatusResponse:
+    """Get current health check progress."""
+    return CheckStatusResponse(**manager.progress.to_dict())
+
+
 @router.post("/proxies/check", response_model=CheckResponse)
 async def trigger_check(store: StoreDep, manager: ManagerDep) -> CheckResponse:
     """Launch health check as a non-blocking background task."""
@@ -213,10 +230,12 @@ async def stats(store: StoreDep) -> StatsResponse:
         by_status[p.status.value] = by_status.get(p.status.value, 0) + 1
         src = p.source or "unknown"
         by_source[src] = by_source.get(src, 0) + 1
+    avg_lat = store.get_avg_latency("active")
     return StatsResponse(
         total=total,
         active=by_status.get("active", 0),
         dead=by_status.get("dead", 0),
         unknown=by_status.get("unknown", 0),
         by_source=by_source,
+        avg_latency_ms=round(avg_lat, 1),
     )

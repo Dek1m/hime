@@ -29,7 +29,7 @@ class ProxyStore:
                     status        TEXT    NOT NULL DEFAULT 'unknown',
                     last_check    REAL    DEFAULT 0,
                     last_working  REAL    DEFAULT 0,
-                    response_time REAL    DEFAULT 0,
+                    latency_ms    REAL    DEFAULT 0,
                     failure_count INTEGER DEFAULT 0,
                     last_used     REAL    DEFAULT 0,
                     added_at      TEXT    DEFAULT (datetime('now')),
@@ -43,10 +43,10 @@ class ProxyStore:
                     ON proxies(last_check);
                 """
             )
-            self._migrate_old_schema(conn)
+            self._migrate(conn)
 
-    def _migrate_old_schema(self, conn: sqlite3.Connection) -> None:
-        """Migrate from old schema (ip,port PK) to new schema (uuid PK)."""
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        """Run all schema migrations."""
         cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='proxies'")
         if not cursor.fetchone():
             return
@@ -54,44 +54,48 @@ class ProxyStore:
         cursor = conn.execute("PRAGMA table_info(proxies)")
         columns = {row["name"] for row in cursor.fetchall()}
 
-        if "uuid" in columns:
-            return
+        # Migration: add uuid column (from v0.1 schema)
+        if "uuid" not in columns:
+            conn.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS proxies_new (
+                    uuid          TEXT    PRIMARY KEY,
+                    ip            TEXT    NOT NULL,
+                    port          INTEGER NOT NULL,
+                    type          TEXT    NOT NULL DEFAULT 'http',
+                    status        TEXT    NOT NULL DEFAULT 'unknown',
+                    last_check    REAL    DEFAULT 0,
+                    last_working  REAL    DEFAULT 0,
+                    latency_ms    REAL    DEFAULT 0,
+                    failure_count INTEGER DEFAULT 0,
+                    last_used     REAL    DEFAULT 0,
+                    added_at      TEXT    DEFAULT (datetime('now')),
+                    source        TEXT    DEFAULT '',
+                    UNIQUE(ip, port)
+                );
 
-        conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS proxies_new (
-                uuid          TEXT    PRIMARY KEY,
-                ip            TEXT    NOT NULL,
-                port          INTEGER NOT NULL,
-                type          TEXT    NOT NULL DEFAULT 'http',
-                status        TEXT    NOT NULL DEFAULT 'unknown',
-                last_check    REAL    DEFAULT 0,
-                last_working  REAL    DEFAULT 0,
-                response_time REAL    DEFAULT 0,
-                failure_count INTEGER DEFAULT 0,
-                last_used     REAL    DEFAULT 0,
-                added_at      TEXT    DEFAULT (datetime('now')),
-                source        TEXT    DEFAULT '',
-                UNIQUE(ip, port)
-            );
+                INSERT INTO proxies_new (uuid, ip, port, type, status, last_check,
+                                         latency_ms, failure_count, last_used, added_at)
+                SELECT lower(hex(randomblob(4)) || '-' || lower(hex(randomblob(2))) || '-4' ||
+                             substr(lower(hex(randomblob(2))),2) || '-' ||
+                             substr('89ab',abs(random())%4+1,1) ||
+                             substr(lower(hex(randomblob(2))),2) || '-' ||
+                             lower(hex(randomblob(6)))),
+                       ip, port, type, status, last_check,
+                       response_time, failure_count, last_used,
+                       COALESCE(created_at, datetime('now'))
+                FROM proxies;
 
-            INSERT INTO proxies_new (uuid, ip, port, type, status, last_check,
-                                     response_time, failure_count, last_used, added_at)
-            SELECT lower(hex(randomblob(4)) || '-' || lower(hex(randomblob(2))) || '-4' ||
-                         substr(lower(hex(randomblob(2))),2) || '-' ||
-                         substr('89ab',abs(random())%4+1,1) ||
-                         substr(lower(hex(randomblob(2))),2) || '-' ||
-                         lower(hex(randomblob(6)))),
-                   ip, port, type, status, last_check,
-                   response_time, failure_count, last_used,
-                   COALESCE(created_at, datetime('now'))
-            FROM proxies;
+                DROP TABLE proxies;
+                ALTER TABLE proxies_new RENAME TO proxies;
+                """
+            )
 
-            DROP TABLE proxies;
-            ALTER TABLE proxies_new RENAME TO proxies;
-            """
-        )
+        # Migration: rename response_time → latency_ms (from v0.1 schema)
+        if "response_time" in columns and "latency_ms" not in columns:
+            conn.execute("ALTER TABLE proxies RENAME COLUMN response_time TO latency_ms")
 
+        # Recreate indexes
         conn.executescript(
             """
             CREATE INDEX IF NOT EXISTS idx_proxies_status
@@ -121,7 +125,7 @@ class ProxyStore:
             conn.execute(
                 """
                 INSERT INTO proxies (uuid, ip, port, type, status, last_check,
-                                     last_working, response_time, failure_count,
+                                     last_working, latency_ms, failure_count,
                                      last_used, added_at, source)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(NULLIF(?, ''), datetime('now')), ?)
                 ON CONFLICT (ip, port) DO UPDATE SET
@@ -130,7 +134,7 @@ class ProxyStore:
                     status=excluded.status,
                     last_check=excluded.last_check,
                     last_working=excluded.last_working,
-                    response_time=excluded.response_time,
+                    latency_ms=excluded.latency_ms,
                     failure_count=excluded.failure_count,
                     last_used=excluded.last_used,
                     source=excluded.source
@@ -143,7 +147,7 @@ class ProxyStore:
                     proxy.status.value,
                     proxy.last_check,
                     proxy.last_working,
-                    proxy.response_time,
+                    proxy.latency_ms,
                     proxy.failure_count,
                     proxy.last_used,
                     proxy.added_at,
@@ -159,7 +163,7 @@ class ProxyStore:
             conn.executemany(
                 """
                 INSERT INTO proxies (uuid, ip, port, type, status, last_check,
-                                     last_working, response_time, failure_count,
+                                     last_working, latency_ms, failure_count,
                                      last_used, added_at, source)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(NULLIF(?, ''), datetime('now')), ?)
                 ON CONFLICT (ip, port) DO UPDATE SET
@@ -168,7 +172,7 @@ class ProxyStore:
                     status=excluded.status,
                     last_check=excluded.last_check,
                     last_working=excluded.last_working,
-                    response_time=excluded.response_time,
+                    latency_ms=excluded.latency_ms,
                     failure_count=excluded.failure_count,
                     last_used=excluded.last_used,
                     source=excluded.source
@@ -182,7 +186,7 @@ class ProxyStore:
                         p.status.value,
                         p.last_check,
                         p.last_working,
-                        p.response_time,
+                        p.latency_ms,
                         p.failure_count,
                         p.last_used,
                         p.added_at,
@@ -223,10 +227,10 @@ class ProxyStore:
             return self._row_to_proxy(row) if row else None
 
     def get_working(self, limit: int = 50) -> list[ProxyData]:
-        """Get working proxies ordered by last_working desc."""
+        """Get working proxies ordered by latency_ms asc (fastest first)."""
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM proxies WHERE status = 'active' ORDER BY last_working DESC LIMIT ?",
+                "SELECT * FROM proxies WHERE status = 'active' ORDER BY latency_ms ASC LIMIT ?",
                 (limit,),
             ).fetchall()
             return [self._row_to_proxy(r) for r in rows]
@@ -255,6 +259,23 @@ class ProxyStore:
             ).fetchall()
             return {row["status"]: row["cnt"] for row in rows}
 
+    def count_checked(self) -> dict[str, int]:
+        """Count proxies that have been checked (last_check > 0)."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) as cnt FROM proxies WHERE last_check > 0"
+            ).fetchone()
+            return {"checked": row["cnt"]}
+
+    def get_avg_latency(self, status: str = "active") -> float:
+        """Get average latency for proxies with given status."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT AVG(latency_ms) as avg_lat FROM proxies WHERE status = ? AND latency_ms > 0",
+                (status,),
+            ).fetchone()
+            return row["avg_lat"] or 0.0
+
     def delete_dead(self) -> int:
         """Delete dead proxies. Returns count deleted."""
         with self._connect() as conn:
@@ -274,7 +295,7 @@ class ProxyStore:
             status=ProxyStatus(row["status"]),
             last_check=row["last_check"],
             last_working=row["last_working"],
-            response_time=row["response_time"],
+            latency_ms=row["latency_ms"],
             failure_count=row["failure_count"],
             last_used=row["last_used"],
             added_at=row["added_at"],

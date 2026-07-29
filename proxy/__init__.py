@@ -32,7 +32,7 @@ class ProxyData:
     status: ProxyStatus = ProxyStatus.UNKNOWN
     last_check: float = 0.0
     last_working: float = 0.0
-    response_time: float = 0.0
+    latency_ms: float = 0.0
     failure_count: int = 0
     last_used: float = 0.0
     added_at: str = ""
@@ -49,11 +49,11 @@ class ProxyData:
         """Check if proxy is available for use."""
         return self.status == ProxyStatus.ACTIVE and self.failure_count < 3
 
-    def mark_success(self, response_time_ms: float) -> None:
-        """Mark successful request."""
+    def mark_success(self, latency: float = 0.0) -> None:
+        """Mark successful request. latency in ms."""
         self.status = ProxyStatus.ACTIVE
         self.failure_count = 0
-        self.response_time = response_time_ms
+        self.latency_ms = latency
         self.last_used = time.time()
         self.last_working = time.time()
 
@@ -63,10 +63,10 @@ class ProxyData:
         if self.failure_count >= 3:
             self.status = ProxyStatus.DEAD
 
-    def mark_checked(self, alive: bool, response_time_ms: float = 0.0) -> None:
-        """Mark health check result."""
+    def mark_checked(self, alive: bool, latency: float = 0.0) -> None:
+        """Mark health check result. latency in ms."""
         self.last_check = time.time()
-        self.response_time = response_time_ms
+        self.latency_ms = latency
         if alive:
             self.status = ProxyStatus.ACTIVE
             self.failure_count = 0

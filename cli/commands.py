@@ -219,7 +219,7 @@ def _proxy_list(status_filter: Optional[str], type_filter: Optional[str]):
     table.add_column("Status")
     table.add_column("Source")
     table.add_column("Failures")
-    table.add_column("Resp (ms)")
+    table.add_column("Latency (ms)")
     table.add_column("Last Check")
 
     status_colors = {
@@ -238,7 +238,7 @@ def _proxy_list(status_filter: Optional[str], type_filter: Optional[str]):
             f"[{color}]{p.status.value}[/{color}]",
             p.source or "-",
             str(p.failure_count),
-            f"{p.response_time:.0f}" if p.response_time else "-",
+            f"{p.latency_ms:.0f}" if p.latency_ms else "-",
             _format_time(p.last_check),
         )
 

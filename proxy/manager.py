@@ -17,12 +17,54 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class RateLimiter:
-    """
-    Token bucket rate limiter per proxy.
+class CheckProgress:
+    """Track health check progress."""
 
-    Allows 1 request per proxy every `refill_interval` seconds.
-    """
+    def __init__(self):
+        self.total: int = 0
+        self.checked: int = 0
+        self.active: int = 0
+        self.dead: int = 0
+        self.running: bool = False
+        self.started_at: float = 0.0
+        self.finished_at: float = 0.0
+
+    def reset(self, total: int) -> None:
+        self.total = total
+        self.checked = 0
+        self.active = 0
+        self.dead = 0
+        self.running = True
+        self.started_at = time.time()
+        self.finished_at = 0.0
+
+    def on_result(self, alive: bool) -> None:
+        self.checked += 1
+        if alive:
+            self.active += 1
+        else:
+            self.dead += 1
+
+    def finish(self) -> None:
+        self.running = False
+        self.finished_at = time.time()
+
+    def to_dict(self) -> dict:
+        elapsed = (self.finished_at or time.time()) - self.started_at if self.started_at else 0
+        return {
+            "running": self.running,
+            "total": self.total,
+            "checked": self.checked,
+            "active": self.active,
+            "dead": self.dead,
+            "unknown": self.total - self.checked,
+            "progress_pct": round(self.checked / self.total * 100, 1) if self.total else 0,
+            "elapsed_sec": round(elapsed, 1),
+        }
+
+
+class RateLimiter:
+    """Token bucket rate limiter per proxy."""
 
     def __init__(self, refill_interval: float = 300.0):
         self._refill_interval = refill_interval
@@ -30,7 +72,6 @@ class RateLimiter:
         self._lock = asyncio.Lock()
 
     async def can_proceed(self, proxy_url: str) -> bool:
-        """Check if proxy can be used now."""
         async with self._lock:
             now = time.monotonic()
             last = self._last_used.get(proxy_url, 0.0)
@@ -40,7 +81,6 @@ class RateLimiter:
             return False
 
     async def wait_time(self, proxy_url: str) -> float:
-        """Get seconds to wait before proxy can be used."""
         now = time.monotonic()
         last = self._last_used.get(proxy_url, 0.0)
         elapsed = now - last
@@ -57,11 +97,7 @@ class ProxyChecker:
         self._test_url = test_url
 
     async def check(self, proxy: ProxyData) -> tuple[bool, float]:
-        """
-        Check if proxy is alive.
-
-        Returns (alive, response_time_ms).
-        """
+        """Check if proxy is alive. Returns (alive, latency_ms)."""
         start = time.monotonic()
         try:
             async with httpx.AsyncClient(
@@ -70,12 +106,12 @@ class ProxyChecker:
                 follow_redirects=False,
             ) as client:
                 resp = await client.get(self._test_url)
-                elapsed_ms = (time.monotonic() - start) * 1000
+                latency_ms = (time.monotonic() - start) * 1000
                 alive = resp.status_code == 200
-                return alive, elapsed_ms
+                return alive, latency_ms
         except Exception:
-            elapsed_ms = (time.monotonic() - start) * 1000
-            return False, elapsed_ms
+            latency_ms = (time.monotonic() - start) * 1000
+            return False, latency_ms
 
 
 class ProxyManager:
@@ -84,7 +120,7 @@ class ProxyManager:
 
     Features:
     - Round-robin rotation through active proxies
-    - Background health checks
+    - Background health checks with progress tracking
     - Rate limiting per proxy
     - Automatic dead proxy removal
     """
@@ -102,6 +138,7 @@ class ProxyManager:
         self._check_task: Optional[asyncio.Task] = None
         self._stats = {"requests": 0, "failures": 0, "cache_hits": 0}
         self._store: Optional["ProxyStore"] = None
+        self.progress = CheckProgress()
 
     async def start(
         self, proxies: list[ProxyData], store: Optional["ProxyStore"] = None
@@ -127,11 +164,7 @@ class ProxyManager:
                 pass
 
     async def get_proxy(self) -> Optional[ProxyData]:
-        """
-        Get next available proxy using round-robin.
-
-        Returns None if no proxy is available.
-        """
+        """Get next available proxy using round-robin."""
         async with self._lock:
             if not self._active_cycle:
                 return None
@@ -145,14 +178,12 @@ class ProxyManager:
                         self._stats["requests"] += 1
                         return proxy
                 attempts += 1
-
-            # All proxies busy or dead
             return None
 
-    async def report_success(self, proxy: ProxyData, response_time_ms: float) -> None:
-        """Report successful request."""
+    async def report_success(self, proxy: ProxyData, latency: float = 0.0) -> None:
+        """Report successful request. latency in ms."""
         async with self._lock:
-            proxy.mark_success(response_time_ms)
+            proxy.mark_success(latency)
             if self._store:
                 self._store.update_last_used(proxy)
 
@@ -188,30 +219,33 @@ class ProxyManager:
                 logger.error("Health check error: %s", e)
 
     async def _run_health_checks(self) -> None:
-        """Run health checks on all proxies."""
+        """Run health checks on all proxies with progress tracking."""
         logger.info("Running health checks on %d proxies...", len(self._proxies))
+        self.progress.reset(len(self._proxies))
 
-        # Check in batches of 50
         batch_size = 50
         for i in range(0, len(self._proxies), batch_size):
             batch = self._proxies[i : i + batch_size]
             tasks = [self._check_one(p) for p in batch]
             await asyncio.gather(*tasks, return_exceptions=True)
 
-        active_count = len([p for p in self._proxies if p.is_available])
+        self.progress.finish()
         logger.info(
-            "Health checks done. Active: %d/%d", active_count, len(self._proxies)
+            "Health checks done. Active: %d/%d, latency_ms avg: %.0f",
+            self.progress.active,
+            self.progress.total,
+            self.progress.active and (sum(p.latency_ms for p in self._proxies if p.status == ProxyStatus.ACTIVE and p.latency_ms > 0) / max(1, self.progress.active)),
         )
 
-        # Rebuild cycle after checks
         async with self._lock:
             self._rebuild_cycle()
 
     async def _check_one(self, proxy: ProxyData) -> None:
         """Check a single proxy."""
-        alive, response_time = await self._checker.check(proxy)
+        alive, latency_ms = await self._checker.check(proxy)
         async with self._lock:
-            proxy.mark_checked(alive, response_time)
+            proxy.mark_checked(alive, latency_ms)
+            self.progress.on_result(alive)
             if self._store:
                 self._store.upsert(proxy)
 
