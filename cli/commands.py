@@ -345,14 +345,15 @@ def _serve(
     port: int = 8000,
 ):
     """Start the API server (FastAPI + uvicorn)."""
-    from hime.api.app import create_app
-
-    fastapi_app = create_app()
-
     console.print(f"[green]Starting Hime API on {host}:{port}[/green]")
     try:
         import uvicorn
-        uvicorn.run(fastapi_app, host=host, port=port)
+        uvicorn.run(
+            "hime.api.app:app",
+            host=host,
+            port=port,
+            log_level="info",
+        )
     except ImportError:
         console.print("[red]uvicorn not installed. Run: pip install uvicorn[/red]")
         raise typer.Exit(1)
