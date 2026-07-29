@@ -71,14 +71,10 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     async def on_startup():
-        # If there are active proxies, use them; otherwise load unknown ones
-        # so the background health check loop has something to check.
-        active = store.get_active()
-        if not active:
-            active = store.get_by_status(ProxyStatus.UNKNOWN)
-            logger.info("No active proxies — loaded %d unknown for initial health check", len(active))
-        await manager.start(active, store)
-        logger.info("Hime API started — %d proxies loaded, embedding=%s", len(active), config.embedding_url)
+        # Load ALL proxies from DB for health checking
+        all_proxies = store.get_all()
+        await manager.start(all_proxies, store)
+        logger.info("Hime API started — %d proxies loaded, embedding=%s", len(all_proxies), config.embedding_url)
 
     @app.on_event("shutdown")
     async def on_shutdown():
