@@ -21,6 +21,10 @@ from .schemas import (
     LoadResponse,
     ProxyListResponse,
     ProxyResponse,
+    SourceCreate,
+    SourceListResponse,
+    SourceResponse,
+    SourceUpdate,
     StatsResponse,
 )
 
@@ -109,7 +113,7 @@ async def _bg_load_from_github(store: ProxyStore, manager: ProxyManager) -> None
     """Load proxies from GitHub, save to DB, restart manager."""
     logger.info("Background proxy load started")
     try:
-        proxies = await load_all_proxies()
+        proxies = await load_all_proxies(store)
         store.bulk_upsert(proxies)
         active = store.get_active()
         await manager.stop()
@@ -241,3 +245,99 @@ async def stats(store: StoreDep) -> StatsResponse:
         by_source=by_source,
         avg_latency_ms=round(avg_lat, 1),
     )
+
+
+# ──────────────── Sources ────────────────
+
+
+def _source_to_response(s) -> SourceResponse:
+    from datetime import datetime, timezone
+    last_fetch_dt = None
+    if s.last_fetch:
+        last_fetch_dt = datetime.fromtimestamp(s.last_fetch, tz=timezone.utc)
+    return SourceResponse(
+        uuid=s.uuid,
+        url=s.url,
+        type_hint=s.type_hint,
+        enabled=s.enabled,
+        last_check=last_fetch_dt,
+        added_at=s.added_at or None,
+    )
+
+
+@router.get("/sources", response_model=SourceListResponse)
+async def list_sources(store: StoreDep) -> SourceListResponse:
+    """List all proxy sources."""
+    sources = store.list_sources()
+    enabled_count = sum(1 for s in sources if s.enabled)
+    return SourceListResponse(
+        sources=[_source_to_response(s) for s in sources],
+        total=len(sources),
+        enabled=enabled_count,
+    )
+
+
+@router.post("/sources", response_model=SourceResponse)
+async def create_source(body: SourceCreate, store: StoreDep) -> SourceResponse:
+    """Add a new proxy source."""
+    existing = store.get_source_by_url(body.url)
+    if existing:
+        raise HTTPException(status_code=409, detail="Source already exists")
+    source = store.add_source(body.url, body.type_hint)
+    return _source_to_response(source)
+
+
+@router.patch("/sources/{source_uuid}", response_model=SourceResponse)
+async def update_source(
+    source_uuid: str,
+    body: SourceUpdate,
+    store: StoreDep,
+) -> SourceResponse:
+    """Update a proxy source (enable/disable, change type)."""
+    # Find by prefix
+    sources = store.list_sources()
+    target = None
+    for s in sources:
+        if s.uuid.startswith(source_uuid):
+            target = s
+            break
+    if target is None:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    if body.enabled is not None:
+        if body.enabled:
+            store.enable_source(target.uuid)
+        else:
+            store.disable_source(target.uuid)
+    if body.type_hint is not None:
+        store.update_source_type(target.uuid, body.type_hint)
+
+    updated = store.get_source(target.uuid)
+    return _source_to_response(updated)
+
+
+@router.delete("/sources/{source_uuid}")
+async def delete_source(source_uuid: str, store: StoreDep) -> dict:
+    """Delete a proxy source."""
+    sources = store.list_sources()
+    target = None
+    for s in sources:
+        if s.uuid.startswith(source_uuid):
+            target = s
+            break
+    if target is None:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    store.delete_source(target.uuid)
+    return {"deleted": True, "uuid": target.uuid, "url": target.url}
+
+
+@router.post("/sources/seed")
+async def seed_sources(store: StoreDep) -> dict:
+    """Seed default sources from config into DB."""
+    from hime.config import load_config
+    config = load_config()
+    urls = [(url, "http") for url in config.proxy.proxy_sources]
+    added = store.seed_sources(urls)
+    total = len(store.list_sources())
+    return {"added": added, "total": total}

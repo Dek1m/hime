@@ -1,15 +1,27 @@
-"""SQLite storage for proxies."""
+"""SQLite storage for proxies and sources."""
 
 import sqlite3
-import uuid
+import uuid as _uuid
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 from hime.proxy import ProxyData, ProxyType, ProxyStatus
 
 
+@dataclass
+class ProxySource:
+    """Proxy source data model."""
+    uuid: str
+    url: str
+    type_hint: str = "http"
+    enabled: bool = True
+    last_fetch: float = 0.0
+    added_at: str = ""
+
+
 class ProxyStore:
-    """SQLite storage for proxy list."""
+    """SQLite storage for proxy list and sources."""
 
     def __init__(self, db_path: str = "db/proxies.db"):
         self._db_path = db_path
@@ -41,6 +53,20 @@ class ProxyStore:
                     ON proxies(status);
                 CREATE INDEX IF NOT EXISTS idx_proxies_last_check
                     ON proxies(last_check);
+
+                CREATE TABLE IF NOT EXISTS proxy_sources (
+                    uuid        TEXT PRIMARY KEY,
+                    url         TEXT NOT NULL UNIQUE,
+                    type_hint   TEXT NOT NULL DEFAULT 'http',
+                    enabled     INTEGER NOT NULL DEFAULT 1,
+                    last_fetch  REAL DEFAULT 0,
+                    added_at    TEXT DEFAULT (datetime('now'))
+                );
+
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_sources_url
+                    ON proxy_sources(url);
+                CREATE INDEX IF NOT EXISTS idx_sources_enabled
+                    ON proxy_sources(enabled);
                 """
             )
             self._migrate(conn)
@@ -300,4 +326,114 @@ class ProxyStore:
             last_used=row["last_used"],
             added_at=row["added_at"],
             source=row["source"],
+        )
+
+    # ──────────────── Sources CRUD ────────────────
+
+    def add_source(self, url: str, type_hint: str = "http") -> ProxySource:
+        """Add a proxy source. Returns created ProxySource."""
+        source_uuid = str(_uuid.uuid4())
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO proxy_sources (uuid, url, type_hint)
+                VALUES (?, ?, ?)
+                """,
+                (source_uuid, url, type_hint),
+            )
+        return ProxySource(uuid=source_uuid, url=url, type_hint=type_hint, enabled=True)
+
+    def get_source(self, source_uuid: str) -> ProxySource | None:
+        """Get source by UUID."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM proxy_sources WHERE uuid = ?", (source_uuid,)
+            ).fetchone()
+            return self._row_to_source(row) if row else None
+
+    def get_source_by_url(self, url: str) -> ProxySource | None:
+        """Get source by URL."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM proxy_sources WHERE url = ?", (url,)
+            ).fetchone()
+            return self._row_to_source(row) if row else None
+
+    def list_sources(self, enabled_only: bool = False) -> list[ProxySource]:
+        """List all sources."""
+        with self._connect() as conn:
+            query = "SELECT * FROM proxy_sources"
+            if enabled_only:
+                query += " WHERE enabled = 1"
+            query += " ORDER BY added_at DESC"
+            rows = conn.execute(query).fetchall()
+            return [self._row_to_source(r) for r in rows]
+
+    def enable_source(self, source_uuid: str) -> bool:
+        """Enable a source."""
+        return self._update_source_field(source_uuid, "enabled", 1)
+
+    def disable_source(self, source_uuid: str) -> bool:
+        """Disable a source."""
+        return self._update_source_field(source_uuid, "enabled", 0)
+
+    def update_source_type(self, source_uuid: str, type_hint: str) -> bool:
+        """Update source type hint."""
+        return self._update_source_field(source_uuid, "type_hint", type_hint)
+
+    def update_last_fetch(self, source_uuid: str) -> None:
+        """Update last_fetch timestamp."""
+        import time
+        self._update_source_field(source_uuid, "last_fetch", time.time())
+
+    def delete_source(self, source_uuid: str) -> bool:
+        """Delete a source."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM proxy_sources WHERE uuid = ?", (source_uuid,)
+            )
+            return cursor.rowcount > 0
+
+    def seed_sources(self, urls: list[tuple[str, str]]) -> int:
+        """Seed sources from a list of (url, type_hint). Returns count added."""
+        added = 0
+        with self._connect() as conn:
+            for url, type_hint in urls:
+                existing = conn.execute(
+                    "SELECT uuid FROM proxy_sources WHERE url = ?", (url,)
+                ).fetchone()
+                if not existing:
+                    source_uuid = str(_uuid.uuid4())
+                    conn.execute(
+                        """
+                        INSERT INTO proxy_sources (uuid, url, type_hint)
+                        VALUES (?, ?, ?)
+                        """,
+                        (source_uuid, url, type_hint),
+                    )
+                    added += 1
+        return added
+
+    def _update_source_field(self, source_uuid: str, field: str, value) -> bool:
+        """Update a single field of a source."""
+        allowed = {"type_hint", "enabled", "last_fetch"}
+        if field not in allowed:
+            return False
+        with self._connect() as conn:
+            cursor = conn.execute(
+                f"UPDATE proxy_sources SET {field} = ? WHERE uuid = ?",
+                (value, source_uuid),
+            )
+            return cursor.rowcount > 0
+
+    @staticmethod
+    def _row_to_source(row: sqlite3.Row) -> ProxySource:
+        """Convert database row to ProxySource."""
+        return ProxySource(
+            uuid=row["uuid"],
+            url=row["url"],
+            type_hint=row["type_hint"],
+            enabled=bool(row["enabled"]),
+            last_fetch=row["last_fetch"],
+            added_at=row["added_at"],
         )

@@ -85,7 +85,7 @@ def load(
             console=console,
         ) as progress:
             task = progress.add_task("Loading proxies from GitHub...", total=None)
-            proxies = await load_all_proxies()
+            proxies = await load_all_proxies(store)
             progress.update(task, description=f"Loaded {len(proxies)} proxies, saving to DB...")
             if proxies:
                 store.bulk_upsert(proxies)
@@ -364,3 +364,178 @@ def _serve(
     except ImportError:
         console.print("[red]uvicorn not installed. Run: pip install uvicorn[/red]")
         raise typer.Exit(1)
+
+
+@app.command("source")
+def source_cmd(
+    action: str = typer.Argument(..., help="Action: list, add, remove, enable, disable, seed"),
+    url: Optional[str] = typer.Option(None, help="Source URL (for add)"),
+    source_id: Optional[str] = typer.Option(None, "--id", help="Source UUID"),
+    type_hint: str = typer.Option("http", "--type", "-t", help="Proxy type hint"),
+):
+    """Manage proxy sources."""
+    if action == "list":
+        _source_list()
+    elif action == "add":
+        if not url:
+            console.print("[red]--url is required for source add[/red]")
+            raise typer.Exit(1)
+        _source_add(url, type_hint)
+    elif action == "remove":
+        if not source_id:
+            console.print("[red]--id is required for source remove[/red]")
+            raise typer.Exit(1)
+        _source_remove(source_id)
+    elif action == "enable":
+        if not source_id:
+            console.print("[red]--id is required for source enable[/red]")
+            raise typer.Exit(1)
+        _source_enable(source_id)
+    elif action == "disable":
+        if not source_id:
+            console.print("[red]--id is required for source disable[/red]")
+            raise typer.Exit(1)
+        _source_disable(source_id)
+    elif action == "seed":
+        _source_seed()
+    else:
+        console.print(f"[red]Unknown action: {action}[/red]")
+        raise typer.Exit(1)
+
+
+def _source_list():
+    """List all proxy sources."""
+    from hime.config import load_config
+    from hime.storage import ProxyStore
+
+    config = load_config()
+    store = ProxyStore(config.sqlite_path)
+    sources = store.list_sources()
+
+    if not sources:
+        console.print("[yellow]No sources found. Run: hime source seed[/yellow]")
+        raise typer.Exit()
+
+    table = Table(title=f"Proxy Sources ({len(sources)})")
+    table.add_column("UUID", style="dim", max_width=8)
+    table.add_column("URL", style="cyan")
+    table.add_column("Type")
+    table.add_column("Enabled")
+    table.add_column("Last Fetch")
+
+    for s in sources:
+        enabled_color = "green" if s.enabled else "red"
+        table.add_row(
+            s.uuid[:8],
+            s.url,
+            s.type_hint,
+            f"[{enabled_color}]{'yes' if s.enabled else 'no'}[/{enabled_color}]",
+            _format_time(s.last_fetch) if s.last_fetch else "-",
+        )
+
+    console.print(table)
+
+    enabled_count = sum(1 for s in sources if s.enabled)
+    console.print(f"\nTotal: {len(sources)} | Enabled: {enabled_count} | Disabled: {len(sources) - enabled_count}")
+
+
+def _source_add(url: str, type_hint: str):
+    """Add a proxy source."""
+    from hime.config import load_config
+    from hime.storage import ProxyStore
+
+    config = load_config()
+    store = ProxyStore(config.sqlite_path)
+
+    # Check for duplicate
+    existing = store.get_source_by_url(url)
+    if existing:
+        console.print(f"[yellow]Source already exists: {existing.uuid[:8]}[/yellow]")
+        raise typer.Exit()
+
+    source = store.add_source(url, type_hint)
+    console.print(f"[green]Added source: {source.uuid[:8]} — {url}[/green]")
+
+
+def _source_remove(source_id: str):
+    """Remove a proxy source."""
+    from hime.config import load_config
+    from hime.storage import ProxyStore
+
+    config = load_config()
+    store = ProxyStore(config.sqlite_path)
+
+    # Find full UUID
+    sources = store.list_sources()
+    target = None
+    for s in sources:
+        if s.uuid.startswith(source_id):
+            target = s
+            break
+
+    if not target:
+        console.print(f"[red]Source not found: {source_id}[/red]")
+        raise typer.Exit(1)
+
+    store.delete_source(target.uuid)
+    console.print(f"[green]Removed source: {target.uuid[:8]} — {target.url}[/green]")
+
+
+def _source_enable(source_id: str):
+    """Enable a proxy source."""
+    from hime.config import load_config
+    from hime.storage import ProxyStore
+
+    config = load_config()
+    store = ProxyStore(config.sqlite_path)
+
+    sources = store.list_sources()
+    target = None
+    for s in sources:
+        if s.uuid.startswith(source_id):
+            target = s
+            break
+
+    if not target:
+        console.print(f"[red]Source not found: {source_id}[/red]")
+        raise typer.Exit(1)
+
+    store.enable_source(target.uuid)
+    console.print(f"[green]Enabled source: {target.uuid[:8]} — {target.url}[/green]")
+
+
+def _source_disable(source_id: str):
+    """Disable a proxy source."""
+    from hime.config import load_config
+    from hime.storage import ProxyStore
+
+    config = load_config()
+    store = ProxyStore(config.sqlite_path)
+
+    sources = store.list_sources()
+    target = None
+    for s in sources:
+        if s.uuid.startswith(source_id):
+            target = s
+            break
+
+    if not target:
+        console.print(f"[red]Source not found: {source_id}[/red]")
+        raise typer.Exit(1)
+
+    store.disable_source(target.uuid)
+    console.print(f"[yellow]Disabled source: {target.uuid[:8]} — {target.url}[/yellow]")
+
+
+def _source_seed():
+    """Seed default sources from config into DB."""
+    from hime.config import load_config
+    from hime.storage import ProxyStore
+
+    config = load_config()
+    store = ProxyStore(config.sqlite_path)
+
+    urls = [(url, "http") for url in config.proxy.proxy_sources]
+    added = store.seed_sources(urls)
+    total = len(store.list_sources())
+    console.print(f"[green]Seeded {added} new sources ({total} total in DB)[/green]")

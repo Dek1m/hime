@@ -70,3 +70,39 @@ class HealthResponse(BaseModel):
     """API health check."""
 
     status: str = "ok"
+
+
+# ──────────────── Sources ────────────────
+
+
+class SourceCreate(BaseModel):
+    """Request to create a proxy source."""
+
+    url: str
+    type_hint: str = Field(default="http", description="Fallback proxy type: http, https, socks5")
+
+
+class SourceUpdate(BaseModel):
+    """Request to update a proxy source."""
+
+    enabled: bool | None = None
+    type_hint: str | None = None
+
+
+class SourceResponse(BaseModel):
+    """Single proxy source representation."""
+
+    uuid: str
+    url: str
+    type_hint: str
+    enabled: bool
+    last_check: datetime | None = None
+    added_at: str | None = None
+
+
+class SourceListResponse(BaseModel):
+    """List of proxy sources."""
+
+    sources: list[SourceResponse]
+    total: int
+    enabled: int
