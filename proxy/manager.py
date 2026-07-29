@@ -230,10 +230,13 @@ class ProxyManager:
                 self._store.upsert(proxy)
 
     async def _health_check_loop(self) -> None:
-        """Background health check every N seconds."""
+        """Background health check every N seconds. Checks ALL proxies from DB."""
         while True:
             try:
                 await asyncio.sleep(self._config.check_interval)
+                if self._store:
+                    self._proxies = self._store.get_all()
+                    logger.info("Health check cycle: %d proxies loaded from DB", len(self._proxies))
                 await self._run_health_checks()
             except asyncio.CancelledError:
                 break
