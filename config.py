@@ -73,6 +73,23 @@ class AppConfig(BaseSettings):
 
     model_config = {"env_prefix": "", "env_nested_delimiter": "__"}
 
+    def model_post_init(self, __context) -> None:
+        """Apply top-level proxy env vars to nested ProxyConfig."""
+        import os
+        mapping = {
+            "CHECK_INTERVAL": "check_interval",
+            "RATE_LIMIT_RPM": "rate_limit_rpm",
+            "HEALTH_CHECK_TIMEOUT": "health_check_timeout",
+            "MAX_FAILURES": "max_failures",
+            "PROXY_REUSE_TIMEOUT": "reuse_timeout",
+            "HEALTH_CHECK_URL": "health_check_url",
+        }
+        for env_key, field_name in mapping.items():
+            val = os.environ.get(env_key)
+            if val is not None:
+                current = getattr(self.proxy, field_name)
+                setattr(self.proxy, field_name, type(current)(val))
+
 
 def load_config() -> AppConfig:
     """Load configuration from environment."""

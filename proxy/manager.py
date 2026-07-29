@@ -245,7 +245,7 @@ class ProxyManager:
         logger.info("Running health checks on %d proxies...", len(self._proxies))
         self.progress.reset(len(self._proxies))
 
-        batch_size = 50
+        batch_size = 100
         for i in range(0, len(self._proxies), batch_size):
             batch = self._proxies[i : i + batch_size]
             tasks = [self._check_one(p) for p in batch]

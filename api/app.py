@@ -18,6 +18,7 @@ def create_app() -> FastAPI:
     from hime.config import load_config, setup_logging
     from hime.cache import SearchCache
     from hime.cache.embedding import EmbeddingClient
+    from hime.proxy import ProxyStatus
     from hime.proxy.manager import ProxyManager
     from hime.storage import ProxyStore
 
@@ -35,7 +36,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Hime API",
         description="Proxy management API for Hime scraper",
-        version="0.4.0",
+        version="0.6.0",
     )
 
     # Bind to app.state
@@ -70,9 +71,14 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     async def on_startup():
+        # If there are active proxies, use them; otherwise load unknown ones
+        # so the background health check loop has something to check.
         active = store.get_active()
+        if not active:
+            active = store.get_by_status(ProxyStatus.UNKNOWN)
+            logger.info("No active proxies — loaded %d unknown for initial health check", len(active))
         await manager.start(active, store)
-        logger.info("Hime API started — %d active proxies, embedding=%s", len(active), config.embedding_url)
+        logger.info("Hime API started — %d proxies loaded, embedding=%s", len(active), config.embedding_url)
 
     @app.on_event("shutdown")
     async def on_shutdown():
