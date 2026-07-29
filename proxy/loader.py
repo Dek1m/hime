@@ -100,6 +100,7 @@ async def _fetch_source(
     for raw_line in resp.text.splitlines():
         proxy = _parse_line(raw_line, fallback_type)
         if proxy is not None:
+            proxy.source = url
             proxies.append(proxy)
     logger.info("Fetched %d proxies from %s", len(proxies), url)
     return proxies
