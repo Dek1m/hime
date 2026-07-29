@@ -1,0 +1,57 @@
+"""Configuration for Hime."""
+
+from pydantic import BaseModel, Field
+from pydantic_settings import BaseSettings
+
+
+class ProxyConfig(BaseModel):
+    """Proxy manager configuration."""
+
+    check_interval: int = Field(default=60, description="Seconds between health checks")
+    rate_limit_rpm: int = Field(default=12, description="Requests per minute per proxy")
+    health_check_timeout: float = Field(default=5.0, description="Health check timeout")
+    max_failures: int = Field(default=3, description="Max failures before marking dead")
+    health_check_url: str = Field(
+        default="https://httpbin.org/ip", description="URL for health checks"
+    )
+
+
+class CacheConfig(BaseModel):
+    """Redis cache configuration."""
+
+    ttl: int = Field(default=3600, description="Cache TTL in seconds")
+    prefix: str = Field(default="hime", description="Redis key prefix")
+
+
+class ScraperConfig(BaseModel):
+    """Scraper configuration."""
+
+    max_concurrent: int = Field(default=100, description="Max concurrent requests")
+    request_timeout: float = Field(default=15.0, description="HTTP request timeout")
+    user_agent: str = Field(
+        default="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0",
+        description="User-Agent header",
+    )
+    search_domain: str = Field(default="google.com", description="Google domain")
+    language: str = Field(default="ru", description="Search language")
+    retry_count: int = Field(default=3, description="Retry count per request")
+    retry_delay: float = Field(default=1.0, description="Base retry delay in seconds")
+
+
+class AppConfig(BaseSettings):
+    """Main application configuration."""
+
+    proxy: ProxyConfig = ProxyConfig()
+    cache: CacheConfig = CacheConfig()
+    scraper: ScraperConfig = ScraperConfig()
+
+    redis_url: str = Field(default="redis://localhost:6379/0", description="Redis URL")
+    sqlite_path: str = Field(default="data/proxies.db", description="SQLite database path")
+    log_level: str = Field(default="INFO", description="Logging level")
+
+    model_config = {"env_prefix": "", "env_nested_delimiter": "__"}
+
+
+def load_config() -> AppConfig:
+    """Load configuration from environment."""
+    return AppConfig()

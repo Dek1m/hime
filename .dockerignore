@@ -1,0 +1,30 @@
+# Git
+.git
+.gitignore
+
+# Окружение (секреты!)
+.env
+.env.local
+.env.production
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+.pytest_cache
+.ruff_cache
+
+# Данные и тесты
+tests/
+data/
+*.db
+*.sqlite
+
+# Инфраструктура
+docker-compose*.yml
+
+# Документация
+plan.md
+README.md
+LICENSE
