@@ -1,6 +1,7 @@
 """Universal HTTP fetcher with HTML parsing."""
 
 import logging
+import re
 import time
 from urllib.parse import urljoin
 
@@ -63,7 +64,26 @@ def _extract_content(tree: HTMLParser) -> str:
     return "\n".join(lines)
 
 
-def _extract_links(tree: HTMLParser, base_url: str) -> list[dict]:
+def _extract_links_regex(html: str, base_url: str) -> list[dict]:
+    """Extract links using regex (fallback for broken HTML)."""
+    seen: set[str] = set()
+    links: list[dict] = []
+    # Match <a> tags with href
+    for m in re.finditer(r'<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>', html, re.DOTALL):
+        href = m.group(1)
+        title = re.sub(r'<[^>]+>', '', m.group(2)).strip()
+        if not href or href.startswith(("#", "javascript:", "mailto:")):
+            continue
+        url = urljoin(base_url, href)
+        if url in seen:
+            continue
+        seen.add(url)
+        if title and len(title) > 5:
+            links.append({"url": url, "title": title[:200], "description": ""})
+    return links
+
+
+def _extract_links(tree: HTMLParser, base_url: str, html: str = "") -> list[dict]:
     seen: set[str] = set()
     links: list[dict] = []
     for a in tree.css("a[href]"):
@@ -78,6 +98,11 @@ def _extract_links(tree: HTMLParser, base_url: str) -> list[dict]:
         if not title:
             title = a.text(strip=True)[:200]
         links.append({"url": url, "title": title, "description": ""})
+
+    # Fallback: regex if selectolax found nothing
+    if not links and html:
+        links = _extract_links_regex(html, base_url)
+
     return links
 
 
@@ -96,7 +121,7 @@ def parse_html(html: str, url: str) -> dict:
     tree = HTMLParser(html)
     title = _extract_title(tree)
     content = _extract_content(tree)
-    links = _extract_links(tree, url)
+    links = _extract_links(tree, url, html)
     desc = _extract_meta_desc(tree)
 
     # Fill description for first few links (top-level page links)
