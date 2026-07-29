@@ -98,9 +98,15 @@ docker compose up --build
 curl http://localhost:8000/health
 ```
 
-### Продакшен (ai-atom.ui)
+### Продакшен (ai.atom.ui)
+- Сервер: ai.atom.ui (CentOS, 8 ядер, 7.5G RAM)
+- Сеть: `app_default` (Docker)
+- Порт: **8008** (внутри контейнера 8000)
+- URL: `http://localhost:8008` или `http://hime:8000` (внутри сети)
+- БД: SQLite внутри контейнера (нет volume — данные теряются при рестарте)
 1. Добавить блок из `docker-compose-block.yml` в общий `docker-compose.yml`
-2. `docker compose up -d hime`
+2. `docker compose up -d --build hime`
+3. `docker exec hime python -m hime load` — загрузить прокси
 
 ## Источники прокси (7 шт.)
 

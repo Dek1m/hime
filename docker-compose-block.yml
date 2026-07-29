@@ -13,13 +13,12 @@
     image: hime:latest
     container_name: hime
     restart: unless-stopped
-    # API-сервер (uvicorn, порт 8000)
+    # API-сервер (uvicorn, порт 8000 внутри, 8008 снаружи)
     command: ["api"]
     ports:
-      - "8000:8000"
+      - "8008:8000"
     volumes:
       - ./hime/data:/app/data
-      - ./hime/db:/app/db
     environment:
       REDIS_URL: redis://redis:6379/0
       SQLITE_PATH: db/proxies.db
