@@ -1,10 +1,12 @@
 """API route handlers."""
 
+from __future__ import annotations
+
 import asyncio
 import logging
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 
 from hime.proxy import ProxyStatus, ProxyType
 from hime.proxy.loader import load_all_proxies
@@ -19,6 +21,7 @@ from .schemas import (
     ProxyResponse,
     StatsResponse,
 )
+from .state import state
 
 logger = logging.getLogger(__name__)
 
@@ -26,22 +29,21 @@ router = APIRouter()
 
 
 # ---------------------------------------------------------------------------
-# Dependency — inject store/manager from app state
+# FastAPI dependencies — read from app.state at request time, not import time
 # ---------------------------------------------------------------------------
 
-def _get_store() -> ProxyStore:
-    raise RuntimeError("Store not initialized")
+def _get_store(request: Request) -> ProxyStore:
+    store: ProxyStore | None = request.app.state.store
+    if store is None:
+        raise RuntimeError("Store not initialized — app may be starting up")
+    return store
 
 
-def _get_manager() -> ProxyManager:
-    raise RuntimeError("Manager not initialized")
-
-
-def init_dependencies(store: ProxyStore, manager: ProxyManager) -> None:
-    """Replace stub dependencies with live instances at startup."""
-    global _get_store, _get_manager  # noqa: PLW0603
-    _get_store = lambda: store  # type: ignore[misc]
-    _get_manager = lambda: manager  # type: ignore[misc]
+def _get_manager(request: Request) -> ProxyManager:
+    manager: ProxyManager | None = request.app.state.manager
+    if manager is None:
+        raise RuntimeError("Manager not initialized — app may be starting up")
+    return manager
 
 
 StoreDep = Annotated[ProxyStore, Depends(_get_store)]
@@ -57,7 +59,6 @@ def _ts_to_iso(ts: float) -> Optional[str]:
     if not ts:
         return None
     from datetime import datetime, timezone
-
     return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
 
 
