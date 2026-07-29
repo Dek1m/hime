@@ -3,7 +3,7 @@
 # ============================================================
 # Многостадийная сборка:
 #   Stage 1: установка зависимостей (кэшируется по pyproject.toml)
-#   Stage 2: runtime — копируем зависимости + код, устанавливаем hime
+#   Stage 2: runtime — копируем зависимости + код, симлинк hime -> .
 # ============================================================
 
 # === Stage 1: Build dependencies ===
@@ -42,11 +42,13 @@ COPY storage/ ./storage/
 COPY cli/ ./cli/
 COPY pyproject.toml ./
 
-# Устанавливаем пакет hime в site-packages (чтобы import работал)
-RUN pip install --no-cache-dir --no-deps .
+# Симлинк hime -> . чтобы "from hime.xxx import ..." работал
+# PYTHONPATH=/app добавляет /app в sys.path,
+# Python находит hime (симлинк на /app) и резолвит hime.xxx -> /app/xxx
+RUN ln -s . hime && \
+    mkdir -p /app/data && chown -R hime:hime /app
 
-# Том для SQLite (data/ монтируется снаружи через docker-compose)
-RUN mkdir -p /app/data && chown -R hime:hime /app
+ENV PYTHONPATH=/app
 
 USER hime
 
