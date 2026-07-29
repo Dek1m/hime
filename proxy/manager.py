@@ -39,7 +39,8 @@ class CheckProgress:
         self.finished_at = 0.0
 
     def on_result(self, alive: bool) -> None:
-        self.checked += 1
+        if self.checked < self.total:
+            self.checked += 1
         if alive:
             self.active += 1
         else:
@@ -51,14 +52,15 @@ class CheckProgress:
 
     def to_dict(self) -> dict:
         elapsed = (self.finished_at or time.time()) - self.started_at if self.started_at else 0
+        unknown = max(0, self.total - self.checked)
         return {
             "running": self.running,
             "total": self.total,
             "checked": self.checked,
             "active": self.active,
             "dead": self.dead,
-            "unknown": self.total - self.checked,
-            "progress_pct": round(self.checked / self.total * 100, 1) if self.total else 0,
+            "unknown": unknown,
+            "progress_pct": round(min(100, self.checked / self.total * 100), 1) if self.total else 0,
             "elapsed_sec": round(elapsed, 1),
         }
 

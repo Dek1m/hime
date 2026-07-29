@@ -204,6 +204,8 @@ async def trigger_check(store: StoreDep, manager: ManagerDep) -> CheckResponse:
     for k, t in list(_tasks.items()):
         if k.startswith("health_check") and not t.done():
             t.cancel()
+    # Reset progress before starting new check
+    manager.progress.reset(0)
     task = asyncio.create_task(_bg_health_check(store, manager))
     _tasks[name] = task
     task.add_done_callback(lambda t: _tasks.pop(name, None))
