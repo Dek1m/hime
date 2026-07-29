@@ -32,7 +32,6 @@ class App:
     async def init(self) -> None:
         """Load config, connect to Redis/SQLite, start ProxyManager."""
         self._config = load_config()
-        logging.basicConfig(level=getattr(logging, self._config.log_level))
 
         self._cache = SearchCache(
             redis_url=self._config.redis_url,
@@ -69,10 +68,8 @@ class App:
 
         Flow: cache → proxy → rate limit → HTTP → parse → cache store → return
         """
-        assert self._cache is not None
-        assert self._manager is not None
-        assert self._client is not None
-        assert self._parser is not None
+        if self._cache is None or self._manager is None or self._client is None or self._parser is None:
+            raise RuntimeError("App not initialized — call init() first")
 
         # 1. Check cache
         cached = await self._cache.get(query, lang, page)

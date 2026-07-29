@@ -130,7 +130,7 @@ class ProxyManager:
         self._config = config
         self._proxies: list[ProxyData] = []
         self._lock = asyncio.Lock()
-        self._rate_limiter = RateLimiter(refill_interval=300.0)
+        self._rate_limiter = RateLimiter(refill_interval=60.0 / config.rate_limit_rpm)
         self._checker = ProxyChecker(
             timeout=config.health_check_timeout,
             test_url=config.health_check_url,

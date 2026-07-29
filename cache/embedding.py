@@ -31,7 +31,7 @@ class EmbeddingClient:
             self._client = httpx.AsyncClient(timeout=30.0)
         return self._client
 
-    async def embed(self, text: str) -> list[float]:
+    async def embed(self, text: str) -> list[float] | None:
         """Get embedding for a single text via API."""
         logger.debug("Embedding call text='%s'", text[:50])
         return await self._request_embedding(text)
@@ -41,10 +41,11 @@ class EmbeddingClient:
         results = []
         for text in texts:
             vector = await self.embed(text)
-            results.append(vector)
+            if vector is not None:
+                results.append(vector)
         return results
 
-    async def _request_embedding(self, text: str) -> list[float]:
+    async def _request_embedding(self, text: str) -> list[float] | None:
         """Call embedding API."""
         client = await self._get_client()
         try:
@@ -63,7 +64,7 @@ class EmbeddingClient:
             return vector
         except Exception as e:
             logger.error("Embedding API error: %s", e)
-            return [0.0] * self._dimension
+            return None
 
     async def close(self) -> None:
         if self._client:

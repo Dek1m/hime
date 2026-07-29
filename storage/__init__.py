@@ -424,20 +424,20 @@ class ProxyStore:
 
     def enable_source(self, source_uuid: str) -> bool:
         """Enable a source."""
-        return self._update_source_field(source_uuid, "enabled", 1)
+        return self._update_source_enabled(source_uuid, 1)
 
     def disable_source(self, source_uuid: str) -> bool:
         """Disable a source."""
-        return self._update_source_field(source_uuid, "enabled", 0)
+        return self._update_source_enabled(source_uuid, 0)
 
     def update_source_type(self, source_uuid: str, type_hint: str) -> bool:
         """Update source type hint."""
-        return self._update_source_field(source_uuid, "type_hint", type_hint)
+        return self._update_source_type(source_uuid, type_hint)
 
     def update_last_fetch(self, source_uuid: str) -> None:
         """Update last_fetch timestamp."""
         import time
-        self._update_source_field(source_uuid, "last_fetch", time.time())
+        self._update_source_last_fetch(source_uuid, time.time())
 
     def delete_source(self, source_uuid: str) -> bool:
         """Delete a source."""
@@ -470,14 +470,26 @@ class ProxyStore:
                     added += 1
         return added
 
-    def _update_source_field(self, source_uuid: str, field: str, value) -> bool:
-        """Update a single field of a source."""
-        allowed = {"type_hint", "enabled", "last_fetch"}
-        if field not in allowed:
-            return False
+    def _update_source_type(self, source_uuid: str, value: str) -> bool:
         with self._connect() as conn:
             cursor = conn.execute(
-                f"UPDATE proxy_sources SET {field} = ? WHERE uuid = ?",
+                "UPDATE proxy_sources SET type_hint = ? WHERE uuid = ?",
+                (value, source_uuid),
+            )
+            return cursor.rowcount > 0
+
+    def _update_source_enabled(self, source_uuid: str, value: int) -> bool:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "UPDATE proxy_sources SET enabled = ? WHERE uuid = ?",
+                (value, source_uuid),
+            )
+            return cursor.rowcount > 0
+
+    def _update_source_last_fetch(self, source_uuid: str, value: float) -> bool:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "UPDATE proxy_sources SET last_fetch = ? WHERE uuid = ?",
                 (value, source_uuid),
             )
             return cursor.rowcount > 0

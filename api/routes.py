@@ -58,14 +58,14 @@ def _task_name(prefix: str) -> str:
 def _get_store(request: Request) -> ProxyStore:
     store: ProxyStore | None = request.app.state.store
     if store is None:
-        raise RuntimeError("Store not initialized")
+        raise HTTPException(status_code=503, detail="Service not initialized")
     return store
 
 
 def _get_manager(request: Request) -> ProxyManager:
     manager: ProxyManager | None = request.app.state.manager
     if manager is None:
-        raise RuntimeError("Manager not initialized")
+        raise HTTPException(status_code=503, detail="Service not initialized")
     return manager
 
 
@@ -110,7 +110,6 @@ async def _bg_health_check(store: ProxyStore, manager: ProxyManager) -> None:
     try:
         all_proxies = store.get_all()
         manager._proxies = all_proxies
-        manager._rebuild_cycle()
         await manager._run_health_checks()
         logger.info("Background health check finished — %d proxies checked", len(all_proxies))
     except Exception:

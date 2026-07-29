@@ -169,16 +169,22 @@ def _parse_proxy_line(line: str):
             rest = line[len(proto) :]
             parts = rest.split(":")
             if len(parts) == 2:
-                return ProxyData(
-                    ip=parts[0],
-                    port=int(parts[1]),
-                    type=ProxyType(proto.rstrip("://")),
-                )
+                try:
+                    return ProxyData(
+                        ip=parts[0],
+                        port=int(parts[1]),
+                        type=ProxyType(proto.rstrip("://")),
+                    )
+                except ValueError:
+                    return None
             return None
 
     parts = line.split(":")
     if len(parts) == 2:
-        return ProxyData(ip=parts[0], port=int(parts[1]), type=ProxyType.HTTP)
+        try:
+            return ProxyData(ip=parts[0], port=int(parts[1]), type=ProxyType.HTTP)
+        except ValueError:
+            return None
     return None
 
 
