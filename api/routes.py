@@ -90,12 +90,16 @@ def _proxy_to_response(p) -> ProxyResponse:
 # Background coroutines — run via asyncio.create_task()
 # ---------------------------------------------------------------------------
 
-async def _bg_health_check(manager: ProxyManager) -> None:
-    """Run full health check cycle, writing results to DB after each batch."""
+async def _bg_health_check(store: ProxyStore, manager: ProxyManager) -> None:
+    """Run full health check on ALL proxies from DB, writing results after each batch."""
     logger.info("Background health check started")
     try:
+        # Reload ALL proxies from DB into manager for checking
+        all_proxies = store.get_all()
+        manager._proxies = all_proxies
+        manager._rebuild_cycle()
         await manager._run_health_checks()
-        logger.info("Background health check finished")
+        logger.info("Background health check finished — %d proxies checked", len(all_proxies))
     except Exception:
         logger.exception("Background health check failed")
 
@@ -176,14 +180,14 @@ async def list_tasks():
 
 
 @router.post("/proxies/check", response_model=CheckResponse)
-async def trigger_check(manager: ManagerDep) -> CheckResponse:
+async def trigger_check(store: StoreDep, manager: ManagerDep) -> CheckResponse:
     """Launch health check as a non-blocking background task."""
     name = _task_name("health_check")
     # Cancel previous check if still running
     for k, t in list(_tasks.items()):
         if k.startswith("health_check") and not t.done():
             t.cancel()
-    task = asyncio.create_task(_bg_health_check(manager))
+    task = asyncio.create_task(_bg_health_check(store, manager))
     _tasks[name] = task
     task.add_done_callback(lambda t: _tasks.pop(name, None))
     return CheckResponse(status="started", message=f"Health check started: {name}")
