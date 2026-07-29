@@ -144,7 +144,7 @@ async def load_all_proxies() -> list[ProxyData]:
         for proxy in result:
             key = (proxy.ip, proxy.port)
             if key not in seen:
-                seen[key] = True
+                seen.add(key)
                 unique.append(proxy)
 
     unique.sort(key=lambda p: (p.ip, p.port))
