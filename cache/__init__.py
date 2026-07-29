@@ -5,6 +5,7 @@ import hashlib
 import logging
 import math
 import uuid
+from datetime import datetime, timezone
 from typing import Optional
 
 from redis.asyncio import Redis
@@ -17,8 +18,8 @@ class SearchCache:
     Redis cache for search results with UUID and semantic vector search.
 
     Key format:
-      - {prefix}:result:{uuid} — main result object
-      - {prefix}:idx:{sha256(query)[:16]} — index: query hash -> uuid
+      - {prefix}:search:result:{uuid} — main result object
+      - {prefix}:search:idx:{sha256(query)[:16]} — index: query hash -> uuid
     TTL: 1 hour by default
     """
 
@@ -44,8 +45,8 @@ class SearchCache:
     ) -> str:
         """Store results with UUID and optional vector. Returns UUID."""
         result_uuid = str(uuid.uuid4())
-        key = f"{self._prefix}:result:{result_uuid}"
-        idx_key = f"{self._prefix}:idx:{hashlib.sha256(f'{query}:{lang}:{page}'.encode()).hexdigest()[:16]}"
+        key = f"{self._prefix}:search:result:{result_uuid}"
+        idx_key = f"{self._prefix}:search:idx:{hashlib.sha256(f'{query}:{lang}:{page}'.encode()).hexdigest()[:16]}"
 
         payload = {
             "uuid": result_uuid,
@@ -54,7 +55,7 @@ class SearchCache:
             "page": page,
             "vector": vector,
             "results": results,
-            "created_at": datetime.now(timezone.utc).isoformat() if 'datetime' in dir() else "",
+            "created_at": datetime.now(timezone.utc).isoformat(),
         }
 
         pipe = self._redis.pipeline()
@@ -67,7 +68,7 @@ class SearchCache:
 
     async def get_by_uuid(self, result_uuid: str) -> Optional[dict]:
         """Get cached result by UUID."""
-        key = f"{self._prefix}:result:{result_uuid}"
+        key = f"{self._prefix}:search:result:{result_uuid}"
         data = await self._redis.get(key)
         if data:
             try:
@@ -78,7 +79,7 @@ class SearchCache:
 
     async def get_by_query(self, query: str, lang: str = "ru", page: int = 1) -> Optional[dict]:
         """Get cached result by query (via index)."""
-        idx_key = f"{self._prefix}:idx:{hashlib.sha256(f'{query}:{lang}:{page}'.encode()).hexdigest()[:16]}"
+        idx_key = f"{self._prefix}:search:idx:{hashlib.sha256(f'{query}:{lang}:{page}'.encode()).hexdigest()[:16]}"
         result_uuid = await self._redis.get(idx_key)
         if result_uuid:
             return await self.get_by_uuid(result_uuid)
@@ -98,7 +99,7 @@ class SearchCache:
         cursor = 0
 
         while True:
-            cursor, keys = await self._redis.scan(cursor, match=f"{self._prefix}:result:*", count=100)
+            cursor, keys = await self._redis.scan(cursor, match=f"{self._prefix}:search:result:*", count=100)
             for key in keys:
                 data = await self._redis.get(key)
                 if not data:
@@ -128,7 +129,7 @@ class SearchCache:
     def _make_key(self, query: str, lang: str = "ru", page: int = 1) -> str:
         raw = f"{query}:{lang}:{page}"
         hash_val = hashlib.sha256(raw.encode()).hexdigest()[:16]
-        return f"{self._prefix}:search:{hash_val}"
+        return f"{self._prefix}:search:idx:{hash_val}"
 
     async def get(self, query: str, lang: str = "ru", page: int = 1) -> Optional[list[dict]]:
         """Legacy: Get cached results by query."""
@@ -143,19 +144,51 @@ class SearchCache:
 
     async def invalidate(self, query: str, lang: str = "ru", page: int = 1) -> bool:
         """Delete cached results."""
-        idx_key = f"{self._prefix}:idx:{hashlib.sha256(f'{query}:{lang}:{page}'.encode()).hexdigest()[:16]}"
+        idx_key = f"{self._prefix}:search:idx:{hashlib.sha256(f'{query}:{lang}:{page}'.encode()).hexdigest()[:16]}"
         result_uuid = await self._redis.get(idx_key)
         deleted = False
         if result_uuid:
-            deleted = bool(await self._redis.delete(f"{self._prefix}:result:{result_uuid}"))
+            deleted = bool(await self._redis.delete(f"{self._prefix}:search:result:{result_uuid}"))
         await self._redis.delete(idx_key)
         return deleted
 
     async def stats(self) -> dict:
-        """Get cache statistics."""
+        """Get cache statistics broken down by key type."""
         info = await self._redis.info("keyspace")
-        keys = await self._redis.dbsize()
-        return {"total_keys": keys, "info": info}
+        total_keys = await self._redis.dbsize()
+
+        # Count hime-prefixed keys by type
+        search_result_count = 0
+        search_idx_count = 0
+        emb_count = 0
+        other_count = 0
+        cursor = 0
+
+        while True:
+            cursor, keys = await self._redis.scan(cursor, match=f"{self._prefix}:*", count=200)
+            for key in keys:
+                if f"{self._prefix}:search:result:" in key:
+                    search_result_count += 1
+                elif f"{self._prefix}:search:idx:" in key:
+                    search_idx_count += 1
+                elif f"{self._prefix}:emb:" in key:
+                    emb_count += 1
+                else:
+                    other_count += 1
+            if cursor == 0:
+                break
+
+        return {
+            "total_keys": total_keys,
+            "hime_keys": {
+                "search_results": search_result_count,
+                "search_indexes": search_idx_count,
+                "embeddings": emb_count,
+                "other": other_count,
+                "total": search_result_count + search_idx_count + emb_count + other_count,
+            },
+            "redis_info": info,
+        }
 
     async def close(self) -> None:
         await self._redis.close()

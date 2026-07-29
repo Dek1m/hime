@@ -72,6 +72,17 @@ class HealthResponse(BaseModel):
     status: str = "ok"
 
 
+# ──────────────── Cache ────────────────
+
+
+class CacheStatsResponse(BaseModel):
+    """Redis cache statistics."""
+
+    total_keys: int = Field(description="Total keys in Redis DB")
+    hime_keys: dict = Field(description="Hime-prefixed keys by type")
+    redis_info: dict = Field(description="Redis keyspace info")
+
+
 # ──────────────── Sources ────────────────
 
 
@@ -205,4 +216,5 @@ class FetchResponse(BaseModel):
     links: list[FetchLink] = Field(default_factory=list)
     headers: dict[str, str] = Field(default_factory=dict)
     timing_ms: float = 0.0
+    cache_uuid: str | None = None
     error: str | None = None

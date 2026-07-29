@@ -31,6 +31,7 @@ def create_app() -> FastAPI:
         model=config.embedding_model,
         dimension=config.embedding_dimension,
         redis_client=cache._redis,
+        cache_prefix=config.cache.prefix,
     )
 
     app = FastAPI(

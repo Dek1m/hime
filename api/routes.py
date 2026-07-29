@@ -15,6 +15,7 @@ from hime.proxy.manager import ProxyManager
 from hime.storage import ProxyStore
 
 from .schemas import (
+    CacheStatsResponse,
     CheckResponse,
     CheckStatusResponse,
     FetchLink,
@@ -254,6 +255,14 @@ async def stats(store: StoreDep) -> StatsResponse:
     )
 
 
+@router.get("/cache/stats", response_model=CacheStatsResponse)
+async def cache_stats(request: Request) -> CacheStatsResponse:
+    """Redis cache statistics — key counts by type, memory usage."""
+    cache = request.app.state.cache
+    stats = await cache.stats()
+    return CacheStatsResponse(**stats)
+
+
 # ──────────────── Sources ────────────────
 
 
@@ -451,10 +460,61 @@ async def delete_service(service_uuid: str, store: StoreDep) -> dict:
 
 
 @router.post("/fetch", response_model=FetchResponse)
-async def fetch_url(body: FetchRequest) -> FetchResponse:
-    """Universal HTTP fetch with HTML parsing."""
+async def fetch_url(
+    body: FetchRequest,
+    request: Request,
+) -> FetchResponse:
+    """Universal HTTP fetch with HTML parsing and vector cache.
+
+    If a semantically similar result exists in cache (cosine >= 0.95),
+    returns cached version instead of making a new request.
+    """
     from hime.scraper.fetcher import fetch_url as do_fetch
 
+    cache = request.app.state.cache
+    embedding = request.app.state.embedding
+
+    # 1. Try exact cache match by URL
+    cached = await cache.get_by_query(body.url)
+    if cached and cached.get("results"):
+        logger.info("Cache hit for URL=%s (uuid=%s)", body.url[:60], cached.get("uuid", "?"))
+        results = cached["results"]
+        return FetchResponse(
+            ok=True,
+            url=cached.get("url", body.url),
+            status=200,
+            title=cached.get("title", ""),
+            content=cached.get("content", ""),
+            links=[FetchLink(**link) for link in results] if results and isinstance(results[0], dict) and "url" in results[0] else [],
+            headers={},
+            timing_ms=0.0,
+            cache_uuid=cached.get("uuid"),
+        )
+
+    # 2. Try semantic search if embedding is available
+    if body.url and embedding:
+        try:
+            vector = await embedding.embed(body.url)
+            similar = await cache.find_similar(vector, threshold=0.95, limit=1)
+            if similar:
+                item = similar[0]
+                logger.info("Semantic cache hit: similarity >= 0.95, uuid=%s", item.get("uuid"))
+                results = item.get("results", [])
+                return FetchResponse(
+                    ok=True,
+                    url=item.get("url", body.url),
+                    status=200,
+                    title=item.get("title", ""),
+                    content=item.get("content", ""),
+                    links=[FetchLink(**link) for link in results] if results and isinstance(results[0], dict) and "url" in results[0] else [],
+                    headers={},
+                    timing_ms=0.0,
+                    cache_uuid=item.get("uuid"),
+                )
+        except Exception as e:
+            logger.warning("Semantic search failed: %s", e)
+
+    # 3. Fetch from network
     result = await do_fetch(
         url=body.url,
         method=body.method,
@@ -463,6 +523,22 @@ async def fetch_url(body: FetchRequest) -> FetchResponse:
         proxy=body.proxy,
         timeout=body.timeout,
     )
+
+    # 4. Cache the result with vector
+    cache_uuid = None
+    if result.get("ok") and embedding:
+        try:
+            vector = await embedding.embed(body.url)
+            links_data = result.get("links", [])
+            cache_uuid = await cache.set_with_vector(
+                query=body.url,
+                results=links_data,
+                vector=vector,
+            )
+            logger.info("Cached result uuid=%s for URL=%s", cache_uuid, body.url[:60])
+        except Exception as e:
+            logger.warning("Failed to cache result: %s", e)
+
     return FetchResponse(
         ok=result["ok"],
         url=result["url"],
@@ -472,5 +548,6 @@ async def fetch_url(body: FetchRequest) -> FetchResponse:
         links=[FetchLink(**link) for link in result.get("links", [])],
         headers=result.get("headers", {}),
         timing_ms=round(result.get("timing_ms", 0), 1),
+        cache_uuid=cache_uuid,
         error=result.get("error"),
     )
