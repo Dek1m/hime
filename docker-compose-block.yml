@@ -1,0 +1,37 @@
+# ============================================================
+# Hime — Proxy Management API
+# ============================================================
+# Интеграция в общий docker-compose.yml на ai.atom.ui
+#
+# Добавить в services:
+# ============================================================
+
+  hime:
+    build:
+      context: ./hime
+      dockerfile: Dockerfile
+    image: hime:latest
+    container_name: hime
+    restart: unless-stopped
+    # API-сервер (uvicorn, порт 8000)
+    command: ["api"]
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./hime/data:/app/data
+      - ./hime/db:/app/db
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      SQLITE_PATH: db/proxies.db
+      LOG_LEVEL: INFO
+    networks:
+      - app_default
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3

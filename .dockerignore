@@ -18,6 +18,7 @@ __pycache__
 # Данные и тесты
 tests/
 data/
+db/
 *.db
 *.sqlite
 

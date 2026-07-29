@@ -1,6 +1,7 @@
 """SQLite storage for proxies."""
 
 import sqlite3
+import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -10,7 +11,7 @@ from hime.proxy import ProxyData, ProxyType, ProxyStatus
 class ProxyStore:
     """SQLite storage for proxy list."""
 
-    def __init__(self, db_path: str = "data/proxies.db"):
+    def __init__(self, db_path: str = "db/proxies.db"):
         self._db_path = db_path
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
@@ -21,17 +22,19 @@ class ProxyStore:
             conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS proxies (
-                    ip           TEXT    NOT NULL,
-                    port         INTEGER NOT NULL,
-                    type         TEXT    NOT NULL DEFAULT 'http',
-                    status       TEXT    NOT NULL DEFAULT 'unknown',
-                    last_check   REAL    DEFAULT 0,
-                    response_time REAL   DEFAULT 0,
+                    uuid          TEXT    PRIMARY KEY,
+                    ip            TEXT    NOT NULL,
+                    port          INTEGER NOT NULL,
+                    type          TEXT    NOT NULL DEFAULT 'http',
+                    status        TEXT    NOT NULL DEFAULT 'unknown',
+                    last_check    REAL    DEFAULT 0,
+                    last_working  REAL    DEFAULT 0,
+                    response_time REAL    DEFAULT 0,
                     failure_count INTEGER DEFAULT 0,
-                    last_used    REAL    DEFAULT 0,
-                    created_at   TEXT    DEFAULT (datetime('now')),
-                    updated_at   TEXT    DEFAULT (datetime('now')),
-                    PRIMARY KEY (ip, port)
+                    last_used     REAL    DEFAULT 0,
+                    added_at      TEXT    DEFAULT (datetime('now')),
+                    source        TEXT    DEFAULT '',
+                    UNIQUE(ip, port)
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_proxies_status
@@ -40,6 +43,63 @@ class ProxyStore:
                     ON proxies(last_check);
                 """
             )
+            self._migrate_old_schema(conn)
+
+    def _migrate_old_schema(self, conn: sqlite3.Connection) -> None:
+        """Migrate from old schema (ip,port PK) to new schema (uuid PK)."""
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='proxies'")
+        if not cursor.fetchone():
+            return
+
+        cursor = conn.execute("PRAGMA table_info(proxies)")
+        columns = {row["name"] for row in cursor.fetchall()}
+
+        if "uuid" in columns:
+            return
+
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS proxies_new (
+                uuid          TEXT    PRIMARY KEY,
+                ip            TEXT    NOT NULL,
+                port          INTEGER NOT NULL,
+                type          TEXT    NOT NULL DEFAULT 'http',
+                status        TEXT    NOT NULL DEFAULT 'unknown',
+                last_check    REAL    DEFAULT 0,
+                last_working  REAL    DEFAULT 0,
+                response_time REAL    DEFAULT 0,
+                failure_count INTEGER DEFAULT 0,
+                last_used     REAL    DEFAULT 0,
+                added_at      TEXT    DEFAULT (datetime('now')),
+                source        TEXT    DEFAULT '',
+                UNIQUE(ip, port)
+            );
+
+            INSERT INTO proxies_new (uuid, ip, port, type, status, last_check,
+                                     response_time, failure_count, last_used, added_at)
+            SELECT lower(hex(randomblob(4)) || '-' || lower(hex(randomblob(2))) || '-4' ||
+                         substr(lower(hex(randomblob(2))),2) || '-' ||
+                         substr('89ab',abs(random())%4+1,1) ||
+                         substr(lower(hex(randomblob(2))),2) || '-' ||
+                         lower(hex(randomblob(6)))),
+                   ip, port, type, status, last_check,
+                   response_time, failure_count, last_used,
+                   COALESCE(created_at, datetime('now'))
+            FROM proxies;
+
+            DROP TABLE proxies;
+            ALTER TABLE proxies_new RENAME TO proxies;
+            """
+        )
+
+        conn.executescript(
+            """
+            CREATE INDEX IF NOT EXISTS idx_proxies_status
+                ON proxies(status);
+            CREATE INDEX IF NOT EXISTS idx_proxies_last_check
+                ON proxies(last_check);
+            """
+        )
 
     @contextmanager
     def _connect(self):
@@ -60,27 +120,34 @@ class ProxyStore:
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO proxies (ip, port, type, status, last_check,
-                                     response_time, failure_count, last_used, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                INSERT INTO proxies (uuid, ip, port, type, status, last_check,
+                                     last_working, response_time, failure_count,
+                                     last_used, added_at, source)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(NULLIF(?, ''), datetime('now')), ?)
                 ON CONFLICT (ip, port) DO UPDATE SET
+                    uuid=excluded.uuid,
                     type=excluded.type,
                     status=excluded.status,
                     last_check=excluded.last_check,
+                    last_working=excluded.last_working,
                     response_time=excluded.response_time,
                     failure_count=excluded.failure_count,
                     last_used=excluded.last_used,
-                    updated_at=datetime('now')
+                    source=excluded.source
                 """,
                 (
+                    proxy.uuid,
                     proxy.ip,
                     proxy.port,
                     proxy.type.value,
                     proxy.status.value,
                     proxy.last_check,
+                    proxy.last_working,
                     proxy.response_time,
                     proxy.failure_count,
                     proxy.last_used,
+                    proxy.added_at,
+                    proxy.source,
                 ),
             )
 
@@ -91,28 +158,35 @@ class ProxyStore:
         with self._connect() as conn:
             conn.executemany(
                 """
-                INSERT INTO proxies (ip, port, type, status, last_check,
-                                     response_time, failure_count, last_used, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                INSERT INTO proxies (uuid, ip, port, type, status, last_check,
+                                     last_working, response_time, failure_count,
+                                     last_used, added_at, source)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(NULLIF(?, ''), datetime('now')), ?)
                 ON CONFLICT (ip, port) DO UPDATE SET
+                    uuid=excluded.uuid,
                     type=excluded.type,
                     status=excluded.status,
                     last_check=excluded.last_check,
+                    last_working=excluded.last_working,
                     response_time=excluded.response_time,
                     failure_count=excluded.failure_count,
                     last_used=excluded.last_used,
-                    updated_at=datetime('now')
+                    source=excluded.source
                 """,
                 [
                     (
+                        p.uuid,
                         p.ip,
                         p.port,
                         p.type.value,
                         p.status.value,
                         p.last_check,
+                        p.last_working,
                         p.response_time,
                         p.failure_count,
                         p.last_used,
+                        p.added_at,
+                        p.source,
                     )
                     for p in proxies
                 ],
@@ -140,6 +214,39 @@ class ProxyStore:
             ).fetchall()
             return [self._row_to_proxy(r) for r in rows]
 
+    def get_by_uuid(self, proxy_uuid: str) -> ProxyData | None:
+        """Get proxy by UUID."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM proxies WHERE uuid = ?", (proxy_uuid,)
+            ).fetchone()
+            return self._row_to_proxy(row) if row else None
+
+    def get_working(self, limit: int = 50) -> list[ProxyData]:
+        """Get working proxies ordered by last_working desc."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM proxies WHERE status = 'active' ORDER BY last_working DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [self._row_to_proxy(r) for r in rows]
+
+    def mark_working(self, proxy: ProxyData) -> None:
+        """Update last_working for a proxy."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE proxies SET last_working = ? WHERE ip = ? AND port = ?",
+                (proxy.last_working, proxy.ip, proxy.port),
+            )
+
+    def update_last_used(self, proxy: ProxyData) -> None:
+        """Update last_used for a proxy."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE proxies SET last_used = ? WHERE ip = ? AND port = ?",
+                (proxy.last_used, proxy.ip, proxy.port),
+            )
+
     def count(self) -> dict[str, int]:
         """Count proxies by status."""
         with self._connect() as conn:
@@ -160,12 +267,16 @@ class ProxyStore:
     def _row_to_proxy(row: sqlite3.Row) -> ProxyData:
         """Convert database row to ProxyData."""
         return ProxyData(
+            uuid=row["uuid"],
             ip=row["ip"],
             port=row["port"],
             type=ProxyType(row["type"]),
             status=ProxyStatus(row["status"]),
             last_check=row["last_check"],
+            last_working=row["last_working"],
             response_time=row["response_time"],
             failure_count=row["failure_count"],
             last_used=row["last_used"],
+            added_at=row["added_at"],
+            source=row["source"],
         )

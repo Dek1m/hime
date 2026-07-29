@@ -14,6 +14,18 @@ class ProxyConfig(BaseModel):
     health_check_url: str = Field(
         default="https://httpbin.org/ip", description="URL for health checks"
     )
+    proxy_sources: list[str] = Field(
+        default=[
+            "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt",
+            "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/socks5.txt",
+            "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt",
+            "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/https.txt",
+            "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
+            "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt",
+            "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
+        ],
+        description="GitHub raw URLs with proxy lists",
+    )
 
 
 class CacheConfig(BaseModel):
@@ -46,7 +58,7 @@ class AppConfig(BaseSettings):
     scraper: ScraperConfig = ScraperConfig()
 
     redis_url: str = Field(default="redis://localhost:6379/0", description="Redis URL")
-    sqlite_path: str = Field(default="data/proxies.db", description="SQLite database path")
+    sqlite_path: str = Field(default="db/proxies.db", description="SQLite database path")
     log_level: str = Field(default="INFO", description="Logging level")
 
     model_config = {"env_prefix": "", "env_nested_delimiter": "__"}

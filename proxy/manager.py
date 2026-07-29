@@ -4,12 +4,15 @@ import asyncio
 import itertools
 import logging
 import time
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import httpx
 
 from hime.config import ProxyConfig
 from hime.proxy import ProxyData, ProxyStatus
+
+if TYPE_CHECKING:
+    from hime.storage import ProxyStore
 
 logger = logging.getLogger(__name__)
 
@@ -98,10 +101,14 @@ class ProxyManager:
         )
         self._check_task: Optional[asyncio.Task] = None
         self._stats = {"requests": 0, "failures": 0, "cache_hits": 0}
+        self._store: Optional["ProxyStore"] = None
 
-    async def start(self, proxies: list[ProxyData]) -> None:
+    async def start(
+        self, proxies: list[ProxyData], store: Optional["ProxyStore"] = None
+    ) -> None:
         """Initialize and start background health checks."""
         self._proxies = proxies
+        self._store = store
         self._rebuild_cycle()
         self._check_task = asyncio.create_task(self._health_check_loop())
         logger.info(
@@ -146,6 +153,8 @@ class ProxyManager:
         """Report successful request."""
         async with self._lock:
             proxy.mark_success(response_time_ms)
+            if self._store:
+                self._store.update_last_used(proxy)
 
     async def report_failure(self, proxy: ProxyData) -> None:
         """Report failed request."""
@@ -159,6 +168,8 @@ class ProxyManager:
                     proxy.failure_count,
                 )
                 self._rebuild_cycle()
+            if self._store:
+                self._store.upsert(proxy)
 
     def _rebuild_cycle(self) -> None:
         """Rebuild round-robin cycle with active proxies."""
@@ -201,6 +212,8 @@ class ProxyManager:
         alive, response_time = await self._checker.check(proxy)
         async with self._lock:
             proxy.mark_checked(alive, response_time)
+            if self._store:
+                self._store.upsert(proxy)
 
     def get_stats(self) -> dict:
         """Get manager statistics."""

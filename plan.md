@@ -1,111 +1,119 @@
-# GProxy — Mass Google Scraper with Proxy Rotation
+# Hime — Proxy Management API
 
 ## Статус
-В разработке. Фаза 0: скелет проекта.
+✅ Все задачи выполнены. Готов к деплою.
 
 ## Суть
-Массовый HTTP-клиент с прокси-ротацией для поисковых запросов к Google. Парсинг HTML выдачи, кеш в Redis, SQLite для списка прокси.
+Сервис управления прокси для поисковых запросов. Загружает HTTP/SOCKS5 прокси с GitHub, проверяет работоспособность, предоставляет REST API для агентов и серверов.
 
 ## Стек
 - **Python 3.11+** + asyncio
+- **FastAPI** + uvicorn — REST API
 - **httpx[socks]** — HTTP/SOCKS5 прокси
-- **selectolax** — парсинг HTML (в 10x быстрее BeautifulSoup)
+- **selectolax** — парсинг HTML
 - **Redis** — кеш на час
 - **SQLite** — список прокси
 - **pydantic-settings** — конфигурация
+- **typer** + **rich** — CLI
 
 ## Архитектура
 
 ```
-gproxy/
-├── gproxy/
-│   ├── proxy/          # менеджер, checker, rate-limiter
-│   ├── scraper/        # HTTP-клиент + парсер Google
-│   ├── cache/          # Redis
-│   ├── storage/        # SQLite
-│   └── cli/            # интерфейс
-├── Dockerfile
-└── docker-compose.yml
+hime/
+├── api/              # REST API (FastAPI)
+│   ├── app.py        # FastAPI приложение
+│   ├── routes.py     # Эндпоинты
+│   └── schemas.py    # Pydantic модели
+├── proxy/            # Менеджер прокси
+│   ├── __init__.py   # ProxyData, ProxyType, ProxyStatus
+│   ├── manager.py    # ProxyManager (round-robin, health-check)
+│   └── loader.py     # Загрузка с GitHub
+├── scraper/          # HTTP-клиент + парсер Google
+├── cache/            # Redis
+├── storage/          # SQLite
+├── cli/              # CLI команды
+├── Dockerfile        # Multi-stage build
+├── docker-compose.yml # Локальная разработка
+└── pyproject.toml
 ```
 
-## 6 фаз, 17 задач
+## Схема БД (proxies)
 
-| Фаза | Суть | Часы | Статус |
-|------|------|------|--------|
-| 0 | Скелет, конфиг, SQLite, Redis | 3-4ч | ✅ |
-| 1 | ProxyManager (round-robin, health-check, rate-limiter) | 5-6ч | ✅ |
-| 2 | Async HTTP-клиент + retry | 4-5ч | ⏳ |
-| 3 | Парсинг Google HTML | 3-4ч | ⏳ |
-| 4 | Оркестрация + CLI | 2-3ч | ⏳ |
-| 5 | Docker + CI/CD | 1-2ч | ⏳ |
+| Поле | Тип | Описание |
+|------|-----|----------|
+| uuid | TEXT PK | UUID4 |
+| ip | TEXT | IP-адрес |
+| port | INTEGER | Порт |
+| type | TEXT | http/https/socks5 |
+| status | TEXT | active/dead/unknown |
+| last_check | REAL | Дата последней проверки |
+| last_working | REAL | Дата последней работоспособности |
+| added_at | TEXT | Дата добавления |
+| last_used | REAL | Время последнего использования |
+| source | TEXT | URL GitHub репозитория |
+| failure_count | INTEGER | Счётчик ошибок |
+| response_time | REAL | Время ответа (ms) |
 
-## Ключевые решения
+## REST API
 
-### ProxyManager
-- **Round-robin** через `itertools.cycle` — O(1)
-- **Token bucket** rate limiter — 1 запрос/прокси/5мин
-- **Health-check** каждую минуту, тестовый URL: httpbin.org/ip
-- **Semaphore(100)** для контроля concurrency
-
-### Парсинг Google
-- **selectolax** — C-парсер, минимум памяти
-- CSS-селекторы: `div.g` (результаты), `h3` (заголовок), `a` (ссылка), `[data-sncf]`/`.VwiC3b` (сниппет)
-- Fallback: цепочка селекторов (Google меняет классы)
-
-### Rate Limiting
-- 2000 прокси × 1 запрос / 5 мин = 400 запросов/мин = 24000/час
-- Запросы Милорда: ~300/час = 1.25% нагрузки
-
-### Кеш Redis
-- Key: `gproxy:search:{sha256(query:lang:page)[:16]}`
-- TTL: 1 час
-- Value: JSON array с SearchResult
-
-### SQLite
-- Composite PK: `(ip, port)`
-- Статусы: active/dead/unknown
-- Индексы: status, last_check
-
-## Инфраструктура (ai-atom.ui)
-
-### Текущий docker-compose.yml
-Путь: `~/app/docker-compose.yml`
-Сеть: `app_default`
-Сервисы: postgres (pgvector:pg18), redis (redis:8-alpine), memory-server, opencode
-
-### Деплой gproxy
-1. Добавить сервис в `docker-compose.yml`
-2. Или создать отдельный compose файл
-3. Подключить к сети `app_default` (для доступа к Redis)
-4. Volume для SQLite: `./data/proxies.db`
-
-### CI/CD (GitHub Actions)
-- Сборка Docker образа → пуш в ghcr.io
-- Деплой через SSH: `docker compose pull && docker compose up -d`
-
-## Риски
-
-1. **Google меняет HTML-селекторы** → regex-fallback в парсере
-2. **Бесплатные прокси мрут** → health-check + auto-reload из GitHub
-3. **CAPTCHA** → распознавание по `div` с формой, пропуск прокси на 10 мин
-4. **SOCKS5 нестабильны** → fallback на HTTP-only прокси
-5. **Rate limit Google** → 1 запрос/прокси/5мин строго, + рандомная задержка 2-5 сек
+| Метод | Путь | Описание |
+|-------|------|----------|
+| GET | `/proxies` | Список прокси (фильтры: status, type, source) |
+| GET | `/proxies/{uuid}` | Один прокси |
+| GET | `/proxies/next` | Следующий рабочий прокси |
+| POST | `/proxies/check` | Запуск проверки |
+| POST | `/proxies/load` | Загрузка с GitHub |
+| GET | `/stats` | Статистика |
+| GET | `/health` | Health check |
 
 ## CLI
 
 ```bash
-gproxy search "python async" --lang=ru --page=1
-gproxy proxy add --file=proxies.txt
-gproxy proxy list --status=active
-gproxy proxy check
-gproxy stats
+# Загрузка прокси с GitHub
+hime load
+hime load --check  # + проверка после загрузки
+
+# Управление прокси
+hime proxy list
+hime proxy list --status=active --type=socks5
+hime proxy add --file=proxies.txt
+hime proxy check
+
+# Поиск
+hime search "python async" --lang=ru --page=1
+
+# API сервер
+hime serve --host=0.0.0.0 --port=8000
+
+# Статистика
+hime stats
 ```
+
+## Деплой
+
+### Локальная разработка
+```bash
+cd /home/opencode/projects/hime
+docker compose up --build
+curl http://localhost:8000/health
+```
+
+### Продакшен (ai-atom.ui)
+1. Добавить блок из `docker-compose-block.yml` в общий `docker-compose.yml`
+2. `docker compose up -d hime`
+
+## Источники прокси (7 шт.)
+
+1. TheSpeedX/SOCKS-List — http.txt, socks5.txt
+2. ShiftyTR/Proxy-List — http.txt, https.txt
+3. monosans/proxy-list — http.txt, socks5.txt
+4. clarketm/proxy-list — proxy-list-raw.txt
 
 ## Конфигурация (.env)
 
 ```env
 REDIS_URL=redis://localhost:6379/0
-SQLITE_PATH=data/proxies.db
+SQLITE_PATH=db/proxies.db
 MAX_CONCURRENT=100
 REQUEST_TIMEOUT=15
 CHECK_INTERVAL=60
@@ -113,3 +121,20 @@ RATE_LIMIT_RPM=12
 CACHE_TTL=3600
 LOG_LEVEL=INFO
 ```
+
+## История
+
+### v0.2.0 — REST API + GitHub Loader (2026-07-28)
+- ✅ Новая схема БД (uuid, last_working, source, added_at)
+- ✅ Загрузка прокси с 7 GitHub репозиториев
+- ✅ REST API (FastAPI): 7 эндпоинтов
+- ✅ CLI: команда serve, обновление proxy list
+- ✅ Docker: Dockerfile + docker-compose.yml
+- ✅ Синхронизация ProxyManager с БД
+
+### v0.1.0 — Скелет (2026-07-27)
+- ✅ Скелет проекта, конфиг, SQLite, Redis
+- ✅ ProxyManager (round-robin, health-check, rate-limiter)
+- ✅ Async HTTP-клиент + retry
+- ✅ Парсинг Google HTML
+- ✅ CLI команды
