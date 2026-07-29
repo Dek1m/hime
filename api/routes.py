@@ -257,10 +257,17 @@ async def stats(store: StoreDep) -> StatsResponse:
 
 @router.get("/cache/stats", response_model=CacheStatsResponse)
 async def cache_stats(request: Request) -> CacheStatsResponse:
-    """Redis cache statistics — key counts by type, memory usage."""
+    """Redis cache statistics — key counts, hit/miss rates."""
     cache = request.app.state.cache
     stats = await cache.stats()
-    return CacheStatsResponse(**stats)
+    return CacheStatsResponse(
+        total_keys=stats["total_keys"],
+        hime_keys=stats["hime_keys"],
+        hit_count=stats["hit_count"],
+        miss_count=stats["miss_count"],
+        hit_rate=stats["hit_rate"],
+        miss_rate=stats["miss_rate"],
+    )
 
 
 # ──────────────── Sources ────────────────

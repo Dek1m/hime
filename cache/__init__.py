@@ -4,6 +4,7 @@ import json
 import hashlib
 import logging
 import math
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -18,7 +19,7 @@ class SearchCache:
     Redis cache for search results with UUID and semantic vector search.
 
     Key format:
-      - {prefix}:search:result:{uuid} — main result object
+      - {prefix}:search:result:{uuid} — main result object (includes vector)
       - {prefix}:search:idx:{sha256(query)[:16]} — index: query hash -> uuid
     TTL: 1 hour by default
     """
@@ -32,6 +33,8 @@ class SearchCache:
         self._redis = Redis.from_url(redis_url, decode_responses=True)
         self._prefix = prefix
         self._ttl = ttl
+        self._hits = 0
+        self._misses = 0
 
     # ──────────── UUID-based cache ────────────
 
@@ -120,22 +123,20 @@ class SearchCache:
             if cursor == 0:
                 break
 
-        # Sort by similarity descending, return top N
         matches.sort(key=lambda x: x[0], reverse=True)
         return [item for _, item in matches[:limit]]
 
     # ──────────── Legacy compatibility ────────────
 
-    def _make_key(self, query: str, lang: str = "ru", page: int = 1) -> str:
-        raw = f"{query}:{lang}:{page}"
-        hash_val = hashlib.sha256(raw.encode()).hexdigest()[:16]
-        return f"{self._prefix}:search:idx:{hash_val}"
-
     async def get(self, query: str, lang: str = "ru", page: int = 1) -> Optional[list[dict]]:
         """Legacy: Get cached results by query."""
         item = await self.get_by_query(query, lang, page)
         if item:
+            logger.info("Cache hit for query='%s'", query[:50])
+            self._hits += 1
             return item.get("results")
+        logger.info("Cache miss for query='%s'", query[:50])
+        self._misses += 1
         return None
 
     async def set(self, query: str, results: list[dict], lang: str = "ru", page: int = 1) -> None:
@@ -153,14 +154,11 @@ class SearchCache:
         return deleted
 
     async def stats(self) -> dict:
-        """Get cache statistics broken down by key type."""
-        info = await self._redis.info("keyspace")
+        """Get cache statistics with hit/miss rates."""
         total_keys = await self._redis.dbsize()
 
-        # Count hime-prefixed keys by type
         search_result_count = 0
         search_idx_count = 0
-        emb_count = 0
         other_count = 0
         cursor = 0
 
@@ -171,23 +169,27 @@ class SearchCache:
                     search_result_count += 1
                 elif f"{self._prefix}:search:idx:" in key:
                     search_idx_count += 1
-                elif f"{self._prefix}:emb:" in key:
-                    emb_count += 1
                 else:
                     other_count += 1
             if cursor == 0:
                 break
+
+        total_requests = self._hits + self._misses
+        hit_rate = self._hits / total_requests if total_requests > 0 else 0.0
+        miss_rate = self._misses / total_requests if total_requests > 0 else 0.0
 
         return {
             "total_keys": total_keys,
             "hime_keys": {
                 "search_results": search_result_count,
                 "search_indexes": search_idx_count,
-                "embeddings": emb_count,
                 "other": other_count,
-                "total": search_result_count + search_idx_count + emb_count + other_count,
+                "total": search_result_count + search_idx_count + other_count,
             },
-            "redis_info": info,
+            "hit_count": self._hits,
+            "miss_count": self._misses,
+            "hit_rate": round(hit_rate, 4),
+            "miss_rate": round(miss_rate, 4),
         }
 
     async def close(self) -> None:

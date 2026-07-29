@@ -76,11 +76,14 @@ class HealthResponse(BaseModel):
 
 
 class CacheStatsResponse(BaseModel):
-    """Redis cache statistics."""
+    """Redis cache statistics with hit/miss metrics."""
 
     total_keys: int = Field(description="Total keys in Redis DB")
     hime_keys: dict = Field(description="Hime-prefixed keys by type")
-    redis_info: dict = Field(description="Redis keyspace info")
+    hit_count: int = Field(description="Total cache hits since startup")
+    miss_count: int = Field(description="Total cache misses since startup")
+    hit_rate: float = Field(description="Cache hit rate (0.0-1.0)")
+    miss_rate: float = Field(description="Cache miss rate (0.0-1.0)")
 
 
 # ──────────────── Sources ────────────────
