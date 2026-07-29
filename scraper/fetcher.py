@@ -36,8 +36,21 @@ def _extract_content(tree: HTMLParser) -> str:
     for tag in tree.css(",".join(_STRIP_TAGS)):
         tag.decompose()
 
-    # Prefer <article> or <main>, fallback to <body>
-    root = tree.css_first("article") or tree.css_first("main") or tree.css_first("body")
+    # Try search engine result snippets first (Bing: li.b_algo, Google: div.g)
+    for selector in ["li.b_algo", "div.g", "div.result", "article", "main"]:
+        root = tree.css_first(selector)
+        if root:
+            lines: list[str] = []
+            for node in root.iter():
+                if node.tag in ("p", "h2", "h3", "span", "div"):
+                    text = node.text(strip=True)
+                    if text and len(text) > 10:
+                        lines.append(text)
+            if lines:
+                return "\n".join(lines[:20])
+
+    # Fallback to body
+    root = tree.css_first("body")
     if root is None:
         return ""
 
