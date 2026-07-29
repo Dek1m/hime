@@ -170,3 +170,39 @@ class ServiceListResponse(BaseModel):
 
     services: list[ServiceResponse]
     total: int
+
+
+# ──────────────── Fetch ────────────────
+
+
+class FetchRequest(BaseModel):
+    """Universal HTTP fetch request."""
+
+    url: str = Field(..., description="Target URL")
+    method: str = Field(default="GET", pattern="^(GET|POST)$")
+    headers: dict[str, str] = Field(default_factory=dict)
+    body: str = Field(default="", description="Request body for POST")
+    proxy: str | None = Field(default=None, description="Proxy URL (http/socks5)")
+    timeout: float = Field(default=15.0, ge=1.0, le=60.0)
+
+
+class FetchLink(BaseModel):
+    """Extracted link from page."""
+
+    url: str
+    title: str = ""
+    description: str = ""
+
+
+class FetchResponse(BaseModel):
+    """Universal fetch response."""
+
+    ok: bool
+    url: str
+    status: int
+    title: str = ""
+    content: str = ""
+    links: list[FetchLink] = Field(default_factory=list)
+    headers: dict[str, str] = Field(default_factory=dict)
+    timing_ms: float = 0.0
+    error: str | None = None

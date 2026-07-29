@@ -17,6 +17,9 @@ from hime.storage import ProxyStore
 from .schemas import (
     CheckResponse,
     CheckStatusResponse,
+    FetchLink,
+    FetchRequest,
+    FetchResponse,
     HealthResponse,
     LoadResponse,
     ProxyListResponse,
@@ -442,3 +445,32 @@ async def delete_service(service_uuid: str, store: StoreDep) -> dict:
         raise HTTPException(status_code=404, detail="Service not found")
     store.delete_service(service_uuid)
     return {"deleted": True, "uuid": service_uuid, "name": existing.name}
+
+
+# ──────────────── Fetch ────────────────
+
+
+@router.post("/fetch", response_model=FetchResponse)
+async def fetch_url(body: FetchRequest) -> FetchResponse:
+    """Universal HTTP fetch with HTML parsing."""
+    from hime.scraper.fetcher import fetch_url as do_fetch
+
+    result = await do_fetch(
+        url=body.url,
+        method=body.method,
+        headers=body.headers,
+        body=body.body,
+        proxy=body.proxy,
+        timeout=body.timeout,
+    )
+    return FetchResponse(
+        ok=result["ok"],
+        url=result["url"],
+        status=result["status"],
+        title=result.get("title", ""),
+        content=result.get("content", ""),
+        links=[FetchLink(**link) for link in result.get("links", [])],
+        headers=result.get("headers", {}),
+        timing_ms=round(result.get("timing_ms", 0), 1),
+        error=result.get("error"),
+    )

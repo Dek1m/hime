@@ -60,7 +60,7 @@ def create_app() -> FastAPI:
         )
         return response
 
-    app.include_router(router)
+    app.include_router(router, prefix="/api/v1")
 
     @app.on_event("startup")
     async def on_startup():
