@@ -1,7 +1,7 @@
 # Hime — Proxy Management API
 
 ## Статус
-✅ Все задачи выполнены. Готов к деплою.
+✅ v0.3.0 — Работает на ai.atom.ui:8008
 
 ## Суть
 Сервис управления прокси для поисковых запросов. Загружает HTTP/SOCKS5 прокси с GitHub, проверяет работоспособность, предоставляет REST API для агентов и серверов.
@@ -12,9 +12,10 @@
 - **httpx[socks]** — HTTP/SOCKS5 прокси
 - **selectolax** — парсинг HTML
 - **Redis** — кеш на час
-- **SQLite** — список прокси
+- **SQLite** — список прокси (volume: /opt/data/hime)
 - **pydantic-settings** — конфигурация
 - **typer** + **rich** — CLI
+- **Logging** — INFO/DEBUG/WARNING/ERROR
 
 ## Архитектура
 
@@ -297,6 +298,8 @@ LOG_LEVEL=INFO
 - ✅ API: GET/POST/PATCH/DELETE /services
 - ✅ CLI: hime service list/add/remove
 - ✅ Миграция из существующей БД
+- ✅ Volume для SQLite: /opt/data/hime
+- ✅ Структурированное логирование (INFO/DEBUG/WARNING/ERROR)
 
 ### v0.2.0 — REST API + GitHub Loader (2026-07-28)
 - ✅ Новая схема БД (uuid, last_working, source, added_at)
