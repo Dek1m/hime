@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
@@ -21,28 +22,37 @@ from .schemas import (
     ProxyResponse,
     StatsResponse,
 )
-from .state import state
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# ---------------------------------------------------------------------------
+# Global task registry — lets us track background jobs
+# ---------------------------------------------------------------------------
+
+_tasks: dict[str, asyncio.Task] = {}
+
+
+def _task_name(prefix: str) -> str:
+    return f"{prefix}_{int(time.time())}"
+
 
 # ---------------------------------------------------------------------------
-# FastAPI dependencies — read from app.state at request time, not import time
+# FastAPI dependencies — read from app.state at request time
 # ---------------------------------------------------------------------------
 
 def _get_store(request: Request) -> ProxyStore:
     store: ProxyStore | None = request.app.state.store
     if store is None:
-        raise RuntimeError("Store not initialized — app may be starting up")
+        raise RuntimeError("Store not initialized")
     return store
 
 
 def _get_manager(request: Request) -> ProxyManager:
     manager: ProxyManager | None = request.app.state.manager
     if manager is None:
-        raise RuntimeError("Manager not initialized — app may be starting up")
+        raise RuntimeError("Manager not initialized")
     return manager
 
 
@@ -55,7 +65,6 @@ ManagerDep = Annotated[ProxyManager, Depends(_get_manager)]
 # ---------------------------------------------------------------------------
 
 def _ts_to_iso(ts: float) -> Optional[str]:
-    """Convert UNIX timestamp to ISO string, or None if zero."""
     if not ts:
         return None
     from datetime import datetime, timezone
@@ -78,6 +87,34 @@ def _proxy_to_response(p) -> ProxyResponse:
 
 
 # ---------------------------------------------------------------------------
+# Background coroutines — run via asyncio.create_task()
+# ---------------------------------------------------------------------------
+
+async def _bg_health_check(manager: ProxyManager) -> None:
+    """Run full health check cycle, writing results to DB after each batch."""
+    logger.info("Background health check started")
+    try:
+        await manager._run_health_checks()
+        logger.info("Background health check finished")
+    except Exception:
+        logger.exception("Background health check failed")
+
+
+async def _bg_load_from_github(store: ProxyStore, manager: ProxyManager) -> None:
+    """Load proxies from GitHub, save to DB, restart manager."""
+    logger.info("Background proxy load started")
+    try:
+        proxies = await load_all_proxies()
+        store.bulk_upsert(proxies)
+        active = store.get_active()
+        await manager.stop()
+        await manager.start(active, store)
+        logger.info("Background proxy load finished — %d proxies", len(proxies))
+    except Exception:
+        logger.exception("Background proxy load failed")
+
+
+# ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 
@@ -89,24 +126,21 @@ async def health() -> HealthResponse:
 @router.get("/proxies", response_model=ProxyListResponse)
 async def list_proxies(
     store: StoreDep,
-    status: Optional[str] = Query(None, description="Filter by status: active, dead, unknown"),
-    type: Optional[str] = Query(None, description="Filter by type: http, https, socks5"),
-    source: Optional[str] = Query(None, description="Filter by source substring"),
+    status: Optional[str] = Query(None),
+    type: Optional[str] = Query(None),
+    source: Optional[str] = Query(None),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
 ) -> ProxyListResponse:
     proxies = store.get_all()
-
     if status:
         proxies = [p for p in proxies if p.status.value == status]
     if type:
         proxies = [p for p in proxies if p.type.value == type]
     if source:
         proxies = [p for p in proxies if source.lower() in p.source.lower()]
-
     total = len(proxies)
-    page = proxies[offset : offset + limit]
-
+    page = proxies[offset:offset + limit]
     return ProxyListResponse(
         proxies=[_proxy_to_response(p) for p in page],
         total=total,
@@ -122,69 +156,59 @@ async def next_proxy(manager: ManagerDep) -> ProxyResponse:
 
 
 @router.get("/proxies/{proxy_uuid}", response_model=ProxyResponse)
-async def get_proxy(
-    proxy_uuid: str,
-    store: StoreDep,
-) -> ProxyResponse:
+async def get_proxy(proxy_uuid: str, store: StoreDep) -> ProxyResponse:
     proxy = store.get_by_uuid(proxy_uuid)
     if proxy is None:
         raise HTTPException(status_code=404, detail="Proxy not found")
     return _proxy_to_response(proxy)
 
 
-async def _run_health_checks(manager: ProxyManager) -> None:
-    """Background task: run full health check cycle."""
-    try:
-        await manager._run_health_checks()
-    except Exception:
-        logger.exception("Background health check failed")
+@router.get("/tasks")
+async def list_tasks():
+    """List active background tasks."""
+    return {
+        name: {
+            "done": task.done(),
+            "cancelled": task.cancelled(),
+        }
+        for name, task in _tasks.items()
+    }
 
 
 @router.post("/proxies/check", response_model=CheckResponse)
-async def trigger_check(
-    background_tasks: BackgroundTasks,
-    manager: ManagerDep,
-) -> CheckResponse:
-    background_tasks.add_task(_run_health_checks, manager)
-    return CheckResponse()
-
-
-async def _load_from_github(store: ProxyStore, manager: ProxyManager) -> None:
-    """Background task: load proxies from GitHub and sync."""
-    try:
-        proxies = await load_all_proxies()
-        store.bulk_upsert(proxies)
-        active = store.get_active()
-        await manager.stop()
-        await manager.start(active, store)
-        logger.info("Loaded %d proxies from GitHub", len(proxies))
-    except Exception:
-        logger.exception("Background proxy load failed")
+async def trigger_check(manager: ManagerDep) -> CheckResponse:
+    """Launch health check as a non-blocking background task."""
+    name = _task_name("health_check")
+    # Cancel previous check if still running
+    for k, t in list(_tasks.items()):
+        if k.startswith("health_check") and not t.done():
+            t.cancel()
+    task = asyncio.create_task(_bg_health_check(manager))
+    _tasks[name] = task
+    task.add_done_callback(lambda t: _tasks.pop(name, None))
+    return CheckResponse(status="started", message=f"Health check started: {name}")
 
 
 @router.post("/proxies/load", response_model=LoadResponse)
-async def trigger_load(
-    background_tasks: BackgroundTasks,
-    store: StoreDep,
-    manager: ManagerDep,
-) -> LoadResponse:
-    background_tasks.add_task(_load_from_github, store, manager)
-    return LoadResponse()
+async def trigger_load(store: StoreDep, manager: ManagerDep) -> LoadResponse:
+    """Launch GitHub proxy loading as a non-blocking background task."""
+    name = _task_name("proxy_load")
+    task = asyncio.create_task(_bg_load_from_github(store, manager))
+    _tasks[name] = task
+    task.add_done_callback(lambda t: _tasks.pop(name, None))
+    return LoadResponse(status="started", message=f"Proxy loading started: {name}")
 
 
 @router.get("/stats", response_model=StatsResponse)
 async def stats(store: StoreDep) -> StatsResponse:
     all_proxies = store.get_all()
     total = len(all_proxies)
-
     by_status = {"active": 0, "dead": 0, "unknown": 0}
     by_source: dict[str, int] = {}
-
     for p in all_proxies:
         by_status[p.status.value] = by_status.get(p.status.value, 0) + 1
         src = p.source or "unknown"
         by_source[src] = by_source.get(src, 0) + 1
-
     return StatsResponse(
         total=total,
         active=by_status.get("active", 0),
