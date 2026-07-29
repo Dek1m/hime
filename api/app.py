@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
+import time
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from .routes import router
@@ -18,11 +19,12 @@ def create_app() -> FastAPI:
     Store and manager are created eagerly and bound to app.state.
     Lifespan handles startup/shutdown lifecycle.
     """
-    from hime.config import load_config
+    from hime.config import load_config, setup_logging
     from hime.proxy.manager import ProxyManager
     from hime.storage import ProxyStore
 
     config = load_config()
+    setup_logging(config.log_level)
     store = ProxyStore(config.sqlite_path)
     manager = ProxyManager(config.proxy)
 
@@ -43,6 +45,20 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def log_requests(request: Request, call_next):
+        start = time.monotonic()
+        response = await call_next(request)
+        elapsed_ms = (time.monotonic() - start) * 1000
+        logger.info(
+            "%s %s — %d (%.0fms)",
+            request.method,
+            request.url.path,
+            response.status_code,
+            elapsed_ms,
+        )
+        return response
 
     app.include_router(router)
 

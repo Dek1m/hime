@@ -178,6 +178,7 @@ class ProxyManager:
                     can_use = await self._rate_limiter.can_proceed(proxy.url)
                     if can_use:
                         self._stats["requests"] += 1
+                        logger.debug("selected proxy %s:%d", proxy.ip, proxy.port)
                         return proxy
                 attempts += 1
             return None

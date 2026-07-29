@@ -86,6 +86,13 @@ class HttpClient:
                     return ""
 
                 resp.raise_for_status()
+                logger.debug(
+                    "GET %s via %s — %d (%.0fms)",
+                    url,
+                    proxy_url or "direct",
+                    resp.status_code,
+                    elapsed_ms,
+                )
                 return resp.text
 
     async def close(self) -> None:

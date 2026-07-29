@@ -1,7 +1,25 @@
 """Configuration for Hime."""
 
+import logging
+import sys
+
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
+
+_LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+_LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+
+def setup_logging(level: str = "INFO") -> None:
+    """Configure root logger with format and level from env."""
+    numeric = getattr(logging, level.upper(), logging.INFO)
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(logging.Formatter(_LOG_FORMAT, datefmt=_LOG_DATE_FORMAT))
+    root = logging.getLogger("hime")
+    root.setLevel(numeric)
+    root.handlers.clear()
+    root.addHandler(handler)
+    root.propagate = False
 
 
 class ProxyConfig(BaseModel):

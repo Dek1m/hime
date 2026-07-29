@@ -31,6 +31,7 @@ def search(
     page: int = typer.Option(1, "--page", "-p", help="Page number"),
 ):
     """Search Google via proxy rotation."""
+    logger.info("search command: query=%s lang=%s page=%d", query, lang, page)
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -77,6 +78,7 @@ def load(
 
     config = load_config()
     store = ProxyStore(config.sqlite_path)
+    logger.info("load command: check=%s", check)
 
     async def _load():
         with Progress(
@@ -110,6 +112,7 @@ def proxy_cmd(
     type: Optional[str] = typer.Option(None, "--type", "-t", help="Filter by type: http, https, socks5"),
 ):
     """Manage proxies."""
+    logger.info("proxy command: action=%s", action)
     if action == "add":
         if not file:
             console.print("[red]--file is required for proxy add[/red]")
@@ -310,6 +313,7 @@ def stats():
     config = load_config()
     store = ProxyStore(config.sqlite_path)
     counts = store.count()
+    logger.info("stats command")
 
     table = Table(title="Hime Statistics")
     table.add_column("Metric", style="bold")
@@ -346,7 +350,10 @@ def _serve(
 ):
     """Start the API server (FastAPI + uvicorn)."""
     from hime.api.app import create_app
+    from hime.config import load_config, setup_logging
 
+    config = load_config()
+    setup_logging(config.log_level)
     console.print(f"[green]Starting Hime API on {host}:{port}[/green]")
     try:
         import uvicorn
@@ -374,6 +381,7 @@ def source_cmd(
     type_hint: str = typer.Option("http", "--type", "-t", help="Proxy type hint"),
 ):
     """Manage proxy sources."""
+    logger.info("source command: action=%s", action)
     if action == "list":
         _source_list()
     elif action == "add":
@@ -551,6 +559,7 @@ def service_cmd(
     proxy: bool = typer.Option(False, "--proxy", help="Use proxy"),
 ):
     """Manage services."""
+    logger.info("service command: action=%s", action)
     if action == "list":
         _service_list()
     elif action == "add":

@@ -1,6 +1,7 @@
 """SQLite storage for proxies, sources and services."""
 
 import json
+import logging
 import sqlite3
 import uuid as _uuid
 from contextlib import contextmanager
@@ -8,6 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from hime.proxy import ProxyData, ProxyType, ProxyStatus
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -191,6 +194,7 @@ class ProxyStore:
 
     def upsert(self, proxy: ProxyData) -> None:
         """Insert or update a single proxy."""
+        logger.debug("upsert proxy %s:%d (%s)", proxy.ip, proxy.port, proxy.status.value)
         with self._connect() as conn:
             conn.execute(
                 """
@@ -229,6 +233,7 @@ class ProxyStore:
         """Insert or update multiple proxies."""
         if not proxies:
             return
+        logger.debug("bulk_upsert %d proxies", len(proxies))
         with self._connect() as conn:
             conn.executemany(
                 """
@@ -352,7 +357,10 @@ class ProxyStore:
             cursor = conn.execute(
                 "DELETE FROM proxies WHERE status = 'dead' AND failure_count >= 10"
             )
-            return cursor.rowcount
+            count = cursor.rowcount
+            if count:
+                logger.info("deleted %d dead proxies", count)
+            return count
 
     @staticmethod
     def _row_to_proxy(row: sqlite3.Row) -> ProxyData:
@@ -377,6 +385,7 @@ class ProxyStore:
     def add_source(self, url: str, type_hint: str = "http") -> ProxySource:
         """Add a proxy source. Returns created ProxySource."""
         source_uuid = str(_uuid.uuid4())
+        logger.debug("add source %s (%s)", url, type_hint)
         with self._connect() as conn:
             conn.execute(
                 """
@@ -436,7 +445,10 @@ class ProxyStore:
             cursor = conn.execute(
                 "DELETE FROM proxy_sources WHERE uuid = ?", (source_uuid,)
             )
-            return cursor.rowcount > 0
+            deleted = cursor.rowcount > 0
+            if deleted:
+                logger.debug("deleted source %s", source_uuid)
+            return deleted
 
     def seed_sources(self, urls: list[tuple[str, str]]) -> int:
         """Seed sources from a list of (url, type_hint). Returns count added."""
@@ -488,6 +500,7 @@ class ProxyStore:
         """Create a new service."""
         service_uuid = str(_uuid.uuid4())
         headers = json.dumps(kwargs.pop("headers", {}))
+        logger.debug("create service %s (%s)", name, url)
         with self._connect() as conn:
             conn.execute(
                 """
@@ -574,7 +587,10 @@ class ProxyStore:
             cursor = conn.execute(
                 "DELETE FROM services WHERE uuid = ?", (service_uuid,)
             )
-            return cursor.rowcount > 0
+            deleted = cursor.rowcount > 0
+            if deleted:
+                logger.debug("deleted service %s", service_uuid)
+            return deleted
 
     def service_exists(self, name: str) -> bool:
         """Check if a service with this name exists."""
