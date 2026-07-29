@@ -356,13 +356,11 @@ async def delete_source(source_uuid: str, store: StoreDep) -> dict:
 
 @router.post("/sources/seed")
 async def seed_sources(store: StoreDep) -> dict:
-    """Seed default sources from config into DB."""
-    from hime.config import load_config
-    config = load_config()
-    urls = [(url, "http") for url in config.proxy.proxy_sources]
-    added = store.seed_sources(urls)
+    """Seed default sources from hardcoded list into DB."""
+    from hime.cli.commands import _source_seed
+    _source_seed()
     total = len(store.list_sources())
-    return {"added": added, "total": total}
+    return {"added": total, "total": total}
 
 
 # ──────────────── Services ────────────────

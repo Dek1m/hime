@@ -33,48 +33,6 @@ class ProxyConfig(BaseModel):
     health_check_url: str = Field(
         default="https://httpbin.org/ip", description="URL for health checks"
     )
-    proxy_sources: list[str] = Field(
-        default=[
-            # === gfpcom (479K http, 476K socks5) ===
-            "https://raw.githubusercontent.com/wiki/gfpcom/free-proxy-list/lists/http.txt",
-            "https://raw.githubusercontent.com/wiki/gfpcom/free-proxy-list/lists/socks5.txt",
-            # === TheSpeedX ===
-            "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt",
-            "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/socks5.txt",
-            # === ShiftyTR ===
-            "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt",
-            "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/https.txt",
-            # === monosans ===
-            "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
-            "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt",
-            # === clarketm ===
-            "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
-            # === vmheaven ===
-            "https://raw.githubusercontent.com/vmheaven/VMHeaven.io-Free-Proxy-List/main/http.txt",
-            "https://raw.githubusercontent.com/vmheaven/VMHeaven.io-Free-Proxy-List/main/https.txt",
-            "https://raw.githubusercontent.com/vmheaven/VMHeaven.io-Free-Proxy-List/main/socks5.txt",
-            # === hproxy-com ===
-            "https://raw.githubusercontent.com/hproxy-com/free-proxy-list/main/http.txt",
-            "https://raw.githubusercontent.com/hproxy-com/free-proxy-list/main/https.txt",
-            "https://raw.githubusercontent.com/hproxy-com/free-proxy-list/main/socks5.txt",
-            # === ProxyScrape ===
-            "https://raw.githubusercontent.com/ProxyScrape/free-proxy-list/main/proxies/protocols/http/data.txt",
-            "https://raw.githubusercontent.com/ProxyScrape/free-proxy-list/main/proxies/protocols/https/data.txt",
-            "https://raw.githubusercontent.com/ProxyScrape/free-proxy-list/main/proxies/protocols/socks5/data.txt",
-            # === proxifly (573 http, 351 socks5) ===
-            "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/http/data.txt",
-            "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/socks5/data.txt",
-            # === hookzof ===
-            "https://raw.githubusercontent.com/hookzof/socks5_list/master/proxy.txt",
-            # === vakhov ===
-            "https://raw.githubusercontent.com/vakhov/fresh-proxy-list/master/http.txt",
-            "https://raw.githubusercontent.com/vakhov/fresh-proxy-list/master/socks5.txt",
-            # === stormsia ===
-            "https://raw.githubusercontent.com/stormsia/proxy-list/main/http.txt",
-            "https://raw.githubusercontent.com/stormsia/proxy-list/main/socks5.txt",
-        ],
-        description="GitHub raw URLs with proxy lists",
-    )
 
 
 class CacheConfig(BaseModel):

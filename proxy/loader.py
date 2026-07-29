@@ -96,18 +96,10 @@ async def _fetch_source(
     return proxies
 
 
-def _sources_from_config() -> dict[str, tuple[str, str]]:
-    """Get sources from config as fallback (url → (uuid, type_hint))."""
-    from hime.config import load_config
-    config = load_config()
-    return {url: ("", "http") for url in config.proxy.proxy_sources}
-
-
 async def load_all_proxies(store: "ProxyStore | None" = None) -> list[ProxyData]:
     """Load proxies from enabled sources in DB.
 
-    Fallback: if store is not provided or table is empty,
-    use sources from config (backward compatibility).
+    If store is not provided or table is empty, auto-seeds defaults.
     """
     source_map: dict[str, tuple[str, str]] = {}  # url → (source_uuid, type_hint)
 
@@ -116,19 +108,14 @@ async def load_all_proxies(store: "ProxyStore | None" = None) -> list[ProxyData]
         if db_sources:
             source_map = {s.url: (s.uuid, s.type_hint) for s in db_sources}
         else:
-            # Fallback: seed from config and use those
-            from hime.config import load_config
-            config = load_config()
-            urls = [(url, "http") for url in config.proxy.proxy_sources]
-            store.seed_sources(urls)
+            # Auto-seed defaults if DB is empty
+            from hime.cli.commands import _source_seed
+            _source_seed()
             db_sources = store.list_sources(enabled_only=True)
             source_map = {s.url: (s.uuid, s.type_hint) for s in db_sources}
 
     if not source_map:
-        source_map = _sources_from_config()
-
-    if not source_map:
-        logger.warning("No proxy sources configured")
+        logger.warning("No proxy sources found — run 'hime source seed' first")
         return []
 
     logger.info("Loading proxies from %d sources...", len(source_map))

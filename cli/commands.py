@@ -542,15 +542,43 @@ def _source_disable(source_id: str):
 
 
 def _source_seed():
-    """Seed default sources from config into DB."""
+    """Seed default sources from hardcoded list into DB."""
     from hime.config import load_config
     from hime.storage import ProxyStore
+
+    # Default sources — the same list that was in config.py
+    DEFAULT_SOURCES = [
+        ("https://raw.githubusercontent.com/wiki/gfpcom/free-proxy-list/lists/http.txt", "http"),
+        ("https://raw.githubusercontent.com/wiki/gfpcom/free-proxy-list/lists/socks5.txt", "socks5"),
+        ("https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt", "http"),
+        ("https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/socks5.txt", "socks5"),
+        ("https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt", "http"),
+        ("https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/https.txt", "https"),
+        ("https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt", "http"),
+        ("https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt", "socks5"),
+        ("https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt", "http"),
+        ("https://raw.githubusercontent.com/vmheaven/VMHeaven.io-Free-Proxy-List/main/http.txt", "http"),
+        ("https://raw.githubusercontent.com/vmheaven/VMHeaven.io-Free-Proxy-List/main/https.txt", "https"),
+        ("https://raw.githubusercontent.com/vmheaven/VMHeaven.io-Free-Proxy-List/main/socks5.txt", "socks5"),
+        ("https://raw.githubusercontent.com/hproxy-com/free-proxy-list/main/http.txt", "http"),
+        ("https://raw.githubusercontent.com/hproxy-com/free-proxy-list/main/https.txt", "https"),
+        ("https://raw.githubusercontent.com/hproxy-com/free-proxy-list/main/socks5.txt", "socks5"),
+        ("https://raw.githubusercontent.com/ProxyScrape/free-proxy-list/main/proxies/protocols/http/data.txt", "http"),
+        ("https://raw.githubusercontent.com/ProxyScrape/free-proxy-list/main/proxies/protocols/https/data.txt", "https"),
+        ("https://raw.githubusercontent.com/ProxyScrape/free-proxy-list/main/proxies/protocols/socks5/data.txt", "socks5"),
+        ("https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/http/data.txt", "http"),
+        ("https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/socks5/data.txt", "socks5"),
+        ("https://raw.githubusercontent.com/hookzof/socks5_list/master/proxy.txt", "socks5"),
+        ("https://raw.githubusercontent.com/vakhov/fresh-proxy-list/master/http.txt", "http"),
+        ("https://raw.githubusercontent.com/vakhov/fresh-proxy-list/master/socks5.txt", "socks5"),
+        ("https://raw.githubusercontent.com/stormsia/proxy-list/main/http.txt", "http"),
+        ("https://raw.githubusercontent.com/stormsia/proxy-list/main/socks5.txt", "socks5"),
+    ]
 
     config = load_config()
     store = ProxyStore(config.sqlite_path)
 
-    urls = [(url, "http") for url in config.proxy.proxy_sources]
-    added = store.seed_sources(urls)
+    added = store.seed_sources(DEFAULT_SOURCES)
     total = len(store.list_sources())
     console.print(f"[green]Seeded {added} new sources ({total} total in DB)[/green]")
 
