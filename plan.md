@@ -1,7 +1,7 @@
 # Hime — Proxy Management API
 
 ## Статус
-✅ v0.3.0 — Работает на ai.atom.ui:8008
+✅ v0.6.0 — Работает на ai.atom.ui:8008
 
 ## Суть
 Сервис управления прокси для поисковых запросов. Загружает HTTP/SOCKS5 прокси с GitHub, проверяет работоспособность, предоставляет REST API для агентов и серверов.
@@ -11,8 +11,8 @@
 - **FastAPI** + uvicorn — REST API
 - **httpx[socks]** — HTTP/SOCKS5 прокси
 - **selectolax** — парсинг HTML
-- **Redis** — кеш на час
-- **SQLite** — список прокси (volume: /opt/data/hime)
+- **Redis** — кеш + vector search
+- **SQLite** — список прокси (proxies, proxy_sources, services)
 - **pydantic-settings** — конфигурация
 - **typer** + **rich** — CLI
 - **Logging** — INFO/DEBUG/WARNING/ERROR
@@ -25,12 +25,14 @@ hime/
 │   ├── app.py        # FastAPI приложение
 │   ├── routes.py     # Эндпоинты
 │   └── schemas.py    # Pydantic модели
+├── cache/            # Redis cache + Vector search
+│   ├── __init__.py   # SearchCache (UUID, cosine similarity)
+│   └── embedding.py  # EmbeddingClient (Qwen3, 4096-dim)
 ├── proxy/            # Менеджер прокси
 │   ├── __init__.py   # ProxyData, ProxyType, ProxyStatus
-│   ├── manager.py    # ProxyManager (round-robin, health-check)
+│   ├── manager.py    # ProxyManager (LRU, health-check, rate-limit)
 │   └── loader.py     # Загрузка с GitHub
-├── scraper/          # HTTP-клиент + парсер Google
-├── cache/            # Redis
+├── scraper/          # HTTP-клиент + парсер
 ├── storage/          # SQLite
 ├── cli/              # CLI команды
 ├── Dockerfile        # Multi-stage build
@@ -38,7 +40,9 @@ hime/
 └── pyproject.toml
 ```
 
-## Схема БД (proxies)
+## Схема БД
+
+### Таблица proxies
 
 | Поле | Тип | Описание |
 |------|-----|----------|
@@ -49,23 +53,65 @@ hime/
 | status | TEXT | active/dead/unknown |
 | last_check | REAL | Дата последней проверки |
 | last_working | REAL | Дата последней работоспособности |
-| added_at | TEXT | Дата добавления |
-| last_used | REAL | Время последнего использования |
-| source | TEXT | URL GitHub репозитория |
+| latency_ms | REAL | Время ответа (ms) |
 | failure_count | INTEGER | Счётчик ошибок |
-| response_time | REAL | Время ответа (ms) |
+| last_used | REAL | Время последнего использования |
+| added_at | TEXT | Дата добавления |
+| source | TEXT | URL GitHub репозитория |
+
+### Таблица proxy_sources
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| uuid | TEXT PK | UUID4 |
+| url | TEXT UNIQUE | URL источника |
+| type_hint | TEXT | Тип прокси по умолчанию |
+| enabled | INTEGER | Включён (0/1) |
+| last_fetch | REAL | Дата последней загрузки |
+| added_at | TEXT | Дата добавления |
+
+### Таблица services
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| uuid | TEXT PK | UUID4 |
+| name | TEXT UNIQUE | Имя сервиса |
+| url | TEXT | Базовый URL |
+| method | TEXT | HTTP метод |
+| headers | TEXT (JSON) | Заголовки |
+| body | TEXT | Тело для POST |
+| timeout | REAL | Таймаут (сек) |
+| cache_ttl | INTEGER | Время кеша (сек) |
+| auto_parse | INTEGER | Автопарсинг (0/1) |
+| rate_limit_rpm | INTEGER | Лимит запросов/мин |
+| callback_url | TEXT | URL для callback |
+| proxy | INTEGER | Использовать прокси (0/1) |
+| enabled | INTEGER | Включён (0/1) |
+| created_at | TEXT | Дата создания |
+| modified_at | TEXT | Дата изменения |
 
 ## REST API
 
 | Метод | Путь | Описание |
 |-------|------|----------|
-| GET | `/proxies` | Список прокси (фильтры: status, type, source) |
-| GET | `/proxies/{uuid}` | Один прокси |
-| GET | `/proxies/next` | Следующий рабочий прокси |
-| POST | `/proxies/check` | Запуск проверки |
-| POST | `/proxies/load` | Загрузка с GitHub |
-| GET | `/stats` | Статистика |
-| GET | `/health` | Health check |
+| GET | `/api/v1/proxies` | Список прокси (фильтры: status, type, source, sort) |
+| GET | `/api/v1/proxies/{uuid}` | Один прокси |
+| GET | `/api/v1/proxies/next` | Следующий рабочий прокси (LRU) |
+| POST | `/api/v1/proxies/check` | Запуск проверки |
+| POST | `/api/v1/proxies/load` | Загрузка с GitHub |
+| GET | `/api/v1/stats` | Статистика |
+| GET | `/api/v1/health` | Health check |
+| GET | `/api/v1/cache/stats` | Статистика кеша (hit/miss) |
+| POST | `/api/v1/fetch` | Универсальный fetch с vector cache |
+| GET | `/api/v1/sources` | Все источники |
+| POST | `/api/v1/sources` | Добавить источник |
+| PATCH | `/api/v1/sources/{uuid}` | Включить/выключить |
+| DELETE | `/api/v1/sources/{uuid}` | Удалить |
+| POST | `/api/v1/sources/seed` | Засеять из конфига |
+| GET | `/api/v1/services` | Все сервисы |
+| POST | `/api/v1/services` | Создать сервис |
+| PATCH | `/api/v1/services/{uuid}` | Обновить сервис |
+| DELETE | `/api/v1/services/{uuid}` | Удалить сервис |
 
 ## CLI
 
@@ -80,14 +126,25 @@ hime proxy list --status=active --type=socks5
 hime proxy add --file=proxies.txt
 hime proxy check
 
-# Поиск
-hime search "python async" --lang=ru --page=1
+# Управление источниками
+hime source list
+hime source add <url> --type http
+hime source remove <uuid>
+hime source enable <uuid>
+hime source disable <uuid>
+hime source seed
 
-# API сервер
-hime serve --host=0.0.0.0 --port=8000
+# Управление сервисами
+hime service list
+hime service add --name=github --url=https://api.github.com
+hime service remove <uuid>
+hime service get <uuid>
 
 # Статистика
 hime stats
+
+# API сервер
+hime serve --host=0.0.0.0 --port=8008
 ```
 
 ## Деплой
@@ -109,174 +166,6 @@ curl http://localhost:8000/health
 2. `docker compose up -d --build hime`
 3. `docker exec hime python -m hime load` — загрузить прокси
 
-## Источники прокси (7 шт.)
-
-1. TheSpeedX/SOCKS-List — http.txt, socks5.txt
-2. ShiftyTR/Proxy-List — http.txt, https.txt
-3. monosans/proxy-list — http.txt, socks5.txt
-4. clarketm/proxy-list — proxy-list-raw.txt
-
-## Таблица proxy_sources
-
-### Схема БД
-
-CREATE TABLE proxy_sources (
-    uuid        TEXT PRIMARY KEY,
-    url         TEXT NOT NULL UNIQUE,
-    type_hint   TEXT DEFAULT 'http',
-    enabled     INTEGER DEFAULT 1,
-    last_fetch  REAL DEFAULT 0,
-    added_at    TEXT DEFAULT (datetime('now'))
-);
-
-### CRUD операции
-
-| Описание | Код |
-|---|---|
-| Добавить источник | store.add_source(url, type_hint) |
-| Получить по UUID | store.get_source(uuid) |
-| Список всех | store.list_sources() |
-| Только активные | store.list_sources(enabled_only=True) |
-| Включить | store.enable_source(uuid) |
-| Выключить | store.disable_source(uuid) |
-| Удалить | store.delete_source(uuid) |
-
-### API эндпоинты
-
-| Метод | Путь | Описание |
-|-------|------|----------|
-| GET | /sources | Список всех источников |
-| POST | /sources | Добавить источник |
-| PATCH | /sources/{uuid} | Включить/выключить |
-| DELETE | /sources/{uuid} | Удалить |
-
-### CLI команды
-
-| Команда | Описание |
-|---------|----------|
-| hime source list | Все источники |
-| hime source add <url> | Добавить |
-| hime source remove <uuid> | Удалить |
-| hime source enable <uuid> | Включить |
-| hime source disable <uuid> | Выключить |
-
-### Миграция
-- При первом запуске: дефолтные sources из config.py → proxy_sources
-- Fallback: если таблица пуста, loader берёт URLs из конфига
-
-## Таблица services (v0.3.0)
-
-### Описание
-Таблица `services` хранит настройки запросов к внешним сервисам. Каждый сервис — это конфигурация HTTP-запроса: URL, метод, заголовки, тело, таймаут, кеш, прокси.
-
-### Схема БД (миграция)
-
-CREATE TABLE IF NOT EXISTS services (
-    uuid            TEXT PRIMARY KEY,
-    name            TEXT    NOT NULL UNIQUE,
-    url             TEXT    NOT NULL,
-    method          TEXT    NOT NULL DEFAULT 'GET',
-    headers         TEXT    DEFAULT '{}',
-    body            TEXT    DEFAULT '',
-    timeout         REAL    DEFAULT 15.0,
-    cache_ttl       INTEGER DEFAULT 0,
-    auto_parse      INTEGER DEFAULT 1,
-    rate_limit_rpm  INTEGER DEFAULT 60,
-    callback_url    TEXT    DEFAULT '',
-    proxy           INTEGER DEFAULT 0,
-    enabled         INTEGER DEFAULT 1,
-    created_at      TEXT    DEFAULT (datetime('now')),
-    modified_at     TEXT    DEFAULT (datetime('now'))
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_services_name ON services(name);
-CREATE INDEX IF NOT EXISTS idx_services_enabled ON services(enabled);
-
-### Параметры
-
-| Параметр | Тип | Описание | Дефолт |
-|---|---|---|---|
-| uuid | TEXT PK | Уникальный идентификатор | UUID4 |
-| name | TEXT UNIQUE | Имя сервиса | — |
-| url | TEXT | Базовый URL | — |
-| method | TEXT | HTTP метод (GET/POST/PUT/DELETE) | GET |
-| headers | TEXT (JSON) | Заголовки по умолчанию | {} |
-| body | TEXT | Тело для POST | "" |
-| timeout | REAL | Таймаут (сек) | 15.0 |
-| cache_ttl | INT | Время кеша (сек), 0 = без кеша | 0 |
-| auto_parse | INT | Автопарсинг ответа (bool) | 1 |
-| rate_limit_rpm | INT | Лимит запросов/мин | 60 |
-| callback_url | TEXT | URL для callback'а | "" |
-| proxy | INT | Использовать прокси (bool) | 0 |
-| enabled | INT | Сервис включён (bool) | 1 |
-| created_at | TEXT | Дата создания | datetime('now') |
-| modified_at | TEXT | Дата последнего изменения | datetime('now') |
-
-### CRUD операции
-
-| Описание | Код |
-|---|---|
-| Создать сервис | store.create_service(name, url, **kwargs) |
-| Получить по UUID | store.get_service(uuid) |
-| Получить по имени | store.get_service_by_name(name) |
-| Список всех | store.list_services() |
-| Только включённые | store.list_services(enabled_only=True) |
-| Обновить | store.update_service(uuid, **fields) |
-| Удалить | store.delete_service(uuid) |
-
-### API эндпоинты
-
-| Метод | Путь | Описание |
-|-------|------|----------|
-| GET | /services | Список всех сервисов |
-| GET | /services/{uuid} | Один сервис |
-| POST | /services | Создать сервис |
-| PATCH | /services/{uuid} | Обновить сервис |
-| DELETE | /services/{uuid} | Удалить сервис |
-
-### JSON формат запроса
-
-POST /services:
-{
-  "name": "github_api",
-  "url": "https://api.github.com",
-  "method": "GET",
-  "headers": {"Accept": "application/json"},
-  "timeout": 10.0,
-  "cache_ttl": 300,
-  "proxy": false
-}
-
-### Декомпозиция задач
-
-| # | Задача | Файл | Сложность | Время |
-|---|--------|------|-----------|-------|
-| 1 | Миграция: таблица services | storage/__init__.py | Низкая | 0.5ч |
-| 2 | Модель ServiceData | storage/__init__.py | Низкая | 0.5ч |
-| 3 | CRUD методы | storage/__init__.py | Средняя | 1ч |
-| 4 | Pydantic схемы | api/schemas.py | Низкая | 0.5ч |
-| 5 | API эндпоинты | api/routes.py | Средняя | 1.5ч |
-| 6 | ServiceStore в app.state | api/app.py | Низкая | 0.5ч |
-| 7 | CLI команды | cli/commands.py | Низкая | 1ч |
-| 8 | Тесты | tests/ | Средняя | 1ч |
-| 9 | Коммит, push, deploy | — | — | 0.5ч |
-
-### Порядок выполнения
-
-1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9
-
-### Зависимости
-
-- Задача 1 (миграция) — обязательна первой
-- Задача 2 (модель) — от задачи 1
-- Задача 3 (CRUD) — от задачи 2
-- Задача 4 (схемы) — от задачи 2
-- Задача 5 (API) — от задач 3, 4
-- Задача 6 (app.state) — от задачи 3
-- Задача 7 (CLI) — от задачи 3
-- Задача 8 (тесты) — от задач 5, 7
-- Задача 9 (deploy) — от всех
-
 ## Конфигурация (.env)
 
 ```env
@@ -288,18 +177,53 @@ CHECK_INTERVAL=60
 RATE_LIMIT_RPM=12
 CACHE_TTL=3600
 LOG_LEVEL=INFO
+PROXY_REUSE_TIMEOUT=120
+EMBEDDING_URL=http://10.0.0.21:8080/v1
+EMBEDDING_MODEL=qwen3-embedding-8b
+EMBEDDING_DIMENSION=4096
 ```
+
+## Тесты
+
+```bash
+pytest tests/
+```
+
+- `test_cache.py` — тесты Redis cache + vector search
+- `test_fetcher.py` — тесты HTTP fetcher + HTML парсинга
+- `test_api.py` — тесты REST API эндпоинтов
 
 ## История
 
-### v0.3.0 — Services Table (2026-07-29)
+### v0.6.0 — Vector Cache + Semantic Search (2026-07-29)
+- ✅ Sources хранятся ТОЛЬКО в БД (proxy_sources table)
+- ✅ LRU proxy selection (reuse_timeout=120s)
+- ✅ Vector cache с embedding (Qwen3, 4096-dim)
+- ✅ Semantic search (cosine >= 0.95)
+- ✅ 8 критических багов исправлено
+- ✅ Cache hit/miss metrics
+- ✅ Tests: test_cache.py, test_fetcher.py, test_api.py
+- ✅ 25 sources, 494K+ прокси
+- ✅ gfpcom (956K прокси) добавлен
+
+### v0.5.0 — Universal Fetcher (2026-07-29)
+- ✅ Универсальный HTTP fetcher с парсингом
+- ✅ POST/GET запросы с прокси
+- ✅ HTML парсинг (title, content, links)
+- ✅ Кеш результатов в Redis
+
+### v0.4.0 — Services Table (2026-07-29)
 - ✅ Таблица services (uuid, name, url, method, headers, body, timeout, cache_ttl, auto_parse, rate_limit_rpm, callback_url, proxy, enabled)
 - ✅ CRUD: create, get, list, update, delete
 - ✅ API: GET/POST/PATCH/DELETE /services
 - ✅ CLI: hime service list/add/remove
-- ✅ Миграция из существующей БД
-- ✅ Volume для SQLite: /opt/data/hime
-- ✅ Структурированное логирование (INFO/DEBUG/WARNING/ERROR)
+
+### v0.3.0 — Proxy Sources (2026-07-29)
+- ✅ Таблица proxy_sources (uuid, url, type_hint, enabled, last_fetch)
+- ✅ CRUD: add, get, list, enable, disable, delete
+- ✅ API: GET/POST/PATCH/DELETE /sources
+- ✅ CLI: hime source list/add/remove/enable/disable/seed
+- ✅ Миграция из конфига в БД
 
 ### v0.2.0 — REST API + GitHub Loader (2026-07-28)
 - ✅ Новая схема БД (uuid, last_working, source, added_at)

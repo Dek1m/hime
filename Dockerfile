@@ -16,6 +16,8 @@ FROM python:3.11-slim AS builder
 WORKDIR /build
 
 # Копируем спецификацию зависимостей
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+
 COPY pyproject.toml .
 
 # Минимальная структура для pip install
@@ -45,6 +47,8 @@ COPY cache/ ./cache/
 COPY storage/ ./storage/
 COPY cli/ ./cli/
 COPY api/ ./api/
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+
 COPY pyproject.toml ./
 
 # Симлинк hime -> . чтобы "from hime.xxx import ..." работал

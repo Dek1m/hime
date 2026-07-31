@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "hime"
 version = "0.6.0"
-description = "Hime — Proxy Management API for search requests"
+description = "Hime — Proxy Management API with LRU, vector cache, semantic search"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
@@ -21,6 +21,7 @@ dependencies = [
     "rich>=13.0.0",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
+    "argenta-logging @ git+https://github.com/Dek1m/argenta-logging.git@master",
 ]
 
 [project.optional-dependencies]

@@ -3,7 +3,7 @@
 Сервис управления HTTP/SOCKS5 прокси для поисковых запросов. Загружает прокси с GitHub, проверяет работоспособность и предоставляет REST API для агентов и серверов.
 
 ![Python](https://img.shields.io/badge/python-3.11+-blue)
-![Version](https://img.shields.io/badge/version-0.2.0-green)
+![Version](https://img.shields.io/badge/version-0.6.0-green)
 ![License](https://img.shields.io/badge/license-MIT-yellow)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-teal)
 
@@ -30,7 +30,7 @@ hime source list                    # все источники
 hime source add <url> --type http   # добавить
 hime source remove <uuid>           # удалить
 hime source enable/disable <uuid>   # включить/выключить
-hime source seed                    # засеять из конфига
+hime source seed                    # засеять из конфига (25 источников)
 
 # Загрузка прокси
 hime load                           # загрузка из БД источников
@@ -51,7 +51,7 @@ hime serve --host=0.0.0.0 --port=8008
 
 ## REST API
 
-Базовый URL: `http://localhost:8008`
+Базовый URL: `http://localhost:8008/api/v1`
 
 ### Прокси
 
@@ -60,7 +60,7 @@ hime serve --host=0.0.0.0 --port=8008
 | `GET` | `/health` | Health check |
 | `GET` | `/proxies` | Список прокси (фильтры: status, type, source, sort) |
 | `GET` | `/proxies/{uuid}` | Один прокси |
-| `GET` | `/proxies/next` | Следующий рабочий (round-robin) |
+| `GET` | `/proxies/next` | Следующий рабочий (LRU) |
 | `POST` | `/proxies/check` | Запуск проверки (non-blocking) |
 | `POST` | `/proxies/load` | Загрузка с GitHub (non-blocking) |
 | `GET` | `/check/status` | Прогресс проверки |
@@ -76,6 +76,23 @@ hime serve --host=0.0.0.0 --port=8008
 | `PATCH` | `/sources/{uuid}` | Включить/выключить |
 | `DELETE` | `/sources/{uuid}` | Удалить |
 | `POST` | `/sources/seed` | Засеять из конфига |
+
+### Сервисы
+
+| Метод | Путь | Описание |
+|-------|------|----------|
+| `GET` | `/services` | Все сервисы |
+| `GET` | `/services/{uuid}` | Один сервис |
+| `POST` | `/services` | Создать сервис |
+| `PATCH` | `/services/{uuid}` | Обновить сервис |
+| `DELETE` | `/services/{uuid}` | Удалить сервис |
+
+### Кеш и Fetch
+
+| Метод | Путь | Описание |
+|-------|------|----------|
+| `GET` | `/cache/stats` | Статистика кеша (hit/miss) |
+| `POST` | `/fetch` | Универсальный HTTP fetch с парсингом и vector cache |
 
 ### Параметры фильтрации
 
@@ -101,6 +118,10 @@ hime serve --host=0.0.0.0 --port=8008
 | `MAX_CONCURRENT` | `100` | Макс. одновременных запросов |
 | `REQUEST_TIMEOUT` | `15.0` | Таймаут HTTP запроса |
 | `CACHE_TTL` | `3600` | Время кеша (сек) |
+| `PROXY_REUSE_TIMEOUT` | `120` | LRU timeout (сек) |
+| `EMBEDDING_URL` | `http://10.0.0.21:8080/v1` | Embedding API URL |
+| `EMBEDDING_MODEL` | `qwen3-embedding-8b` | Модель embedding |
+| `EMBEDDING_DIMENSION` | `4096` | Размерность вектора |
 
 ## Docker
 
@@ -132,36 +153,43 @@ hime/
 ├── api/              REST API (FastAPI)
 │   ├── app.py        FastAPI + lifespan
 │   ├── routes.py     Эндпоинты
-│   ├── schemas.py    Pydantic-модели
-│   └── state.py      AppState singleton
+│   └── schemas.py    Pydantic-модели
+├── cache/            Redis cache + Vector search
+│   ├── __init__.py   SearchCache (UUID, cosine similarity)
+│   └── embedding.py  EmbeddingClient (Qwen3, 4096-dim)
 ├── proxy/            Менеджер прокси
 │   ├── __init__.py   ProxyData, ProxyType, ProxyStatus
-│   ├── manager.py    ProxyManager + CheckProgress
+│   ├── manager.py    ProxyManager (LRU, health-check, rate-limit)
 │   └── loader.py     Загрузка из БД источников
+├── scraper/          HTTP-клиент + парсер
+│   ├── fetcher.py    Универсальный fetcher с парсингом
+│   └── google_parser.py
 ├── storage/          SQLite
-│   └── __init__.py   ProxyStore (proxies + proxy_sources)
+│   └── __init__.py   ProxyStore (proxies, proxy_sources, services)
 ├── cli/              CLI (typer + rich)
 ├── config.py         Конфигурация (pydantic-settings)
 ├── Dockerfile        Multi-stage build
 └── docker-compose-block.yml
 ```
 
-## Источники прокси (21)
+## Источники прокси (25)
 
-| Источник | HTTP | SOCKS5 |
-|---|---|---|
-| vmheaven/VMHeaven | 5,298 | 369 |
-| TheSpeedX/SOCKS-List | 2,863 | 703 |
-| hproxy-com/free-proxy-list | 2,399 | 136 |
-| vmheaven/https | 1,345 | — |
-| ProxyScrape | 299 | 327 |
-| hookzof/socks5_list | — | 418 |
-| vakhov/fresh-proxy-list | 485 | — |
-| monosans/proxy-list | 60 | 63 |
-| stormsia/proxy-list | 28 | 11 |
-| Остальные | — | — |
+| Источник | Тип |
+|---|---|
+| gfpcom/free-proxy-list | http, socks5 |
+| TheSpeedX/SOCKS-List | http, socks5 |
+| ShiftyTR/Proxy-List | http, https |
+| monosans/proxy-list | http, socks5 |
+| clarketm/proxy-list | http |
+| vmheaven/VMHeaven | http, https, socks5 |
+| hproxy-com/free-proxy-list | http, https, socks5 |
+| ProxyScrape | http, https, socks5 |
+| proxifly/free-proxy-list | http, socks5 |
+| hookzof/socks5_list | socks5 |
+| vakhov/fresh-proxy-list | http, socks5 |
+| stormsia/proxy-list | http, socks5 |
 
-**Итого: ~15,000 прокси**
+**Итого: ~494K прокси** (включая gfpcom — 956K прокси)
 
 ## Лицензия
 

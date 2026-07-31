@@ -15,7 +15,8 @@ logger = logging.getLogger(__name__)
 
 def create_app() -> FastAPI:
     """Build and configure the FastAPI application."""
-    from hime.config import load_config, setup_logging
+    from argenta_logging import setup_logging
+    from hime.config import load_config
     from hime.cache import SearchCache
     from hime.cache.embedding import EmbeddingClient
     from hime.proxy import ProxyStatus
@@ -23,7 +24,7 @@ def create_app() -> FastAPI:
     from hime.storage import ProxyStore
 
     config = load_config()
-    setup_logging(config.log_level)
+    setup_logging(level=config.log_level)
     store = ProxyStore(config.sqlite_path)
     manager = ProxyManager(config.proxy)
     cache = SearchCache(redis_url=config.redis_url, prefix=config.cache.prefix, ttl=config.cache.ttl)

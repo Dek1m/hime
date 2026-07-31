@@ -355,11 +355,12 @@ def _serve(
     port: int = 8008,
 ):
     """Start the API server (FastAPI + uvicorn)."""
+    from argenta_logging import setup_logging
     from hime.api.app import create_app
-    from hime.config import load_config, setup_logging
+    from hime.config import load_config
 
     config = load_config()
-    setup_logging(config.log_level)
+    setup_logging(level=config.log_level)
     console.print(f"[green]Starting Hime API on {host}:{port}[/green]")
     try:
         import uvicorn
